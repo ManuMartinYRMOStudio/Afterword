@@ -15,7 +15,7 @@ let secrets = [];
 // response descriptions, request URLs, chat IDs, command lines, or env values.
 function display(value) {
   let text = String(value);
-  for (const secret of secrets) text = text.split(secret).join('[oculto]');
+  for (const secret of secrets) text = text.split(secret).join('[redacted]');
   return text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').slice(0,80);
 }
 
@@ -36,11 +36,11 @@ async function checkEnv() {
     ]))].sort((a, b) => b.length - a.length);
     const lengths = REQUIRED.map(key => key + '.length=' + (env[key]?.length ?? 0)).join(', ');
     const missing = REQUIRED.filter(key => !env[key]?.trim());
-    return result(missing.length === 0, 'presente; ' + lengths +
-      (missing.length ? '; faltan o están vacías: ' + missing.join(', ') : ''));
+    return result(missing.length === 0, 'present; ' + lengths +
+      (missing.length ? '; missing or empty: ' + missing.join(', ') : ''));
   } catch (error) {
-    return result(false, (error.code === 'ENOENT' ? 'no existe' : 'no se puede leer o interpretar') +
-      '; TG_TOKEN.length=0, TG_CHAT.length=0, ENGINE_URL.length=0 (no verificadas)');
+    return result(false, (error.code === 'ENOENT' ? 'does not exist' : 'cannot be read or parsed') +
+      '; TG_TOKEN.length=0, TG_CHAT.length=0, ENGINE_URL.length=0 (unverified)');
   }
 }
 
@@ -57,56 +57,56 @@ async function telegram(method, parameters = {}) {
     try {
       data = await response.json();
     } catch {
-      return result(false, 'HTTP ' + response.status + '; respuesta JSON no válida');
+      return result(false, 'HTTP ' + response.status + '; invalid JSON response');
     }
     if (!response.ok || data?.ok !== true) {
-      return result(false, 'HTTP ' + response.status + '; Telegram rechazó la solicitud');
+      return result(false, 'HTTP ' + response.status + '; Telegram rejected the request');
     }
     return { ok: true, data: data.result };
   } catch (error) {
     return result(false, error.name === 'TimeoutError'
-      ? 'Telegram no respondió en 10000 ms' : 'no se pudo conectar con Telegram');
+      ? 'Telegram did not respond within 10000 ms' : 'could not connect to Telegram');
   }
 }
 
 async function checkBot() {
-  if (!env.TG_TOKEN?.trim()) return result(false, 'sin comprobar: falta TG_TOKEN');
+  if (!env.TG_TOKEN?.trim()) return result(false, 'not checked: TG_TOKEN is missing');
   const response = await telegram('getMe');
   if (!response.ok) return response;
   const bot = response.data;
   if (bot?.is_bot !== true || typeof bot.username !== 'string' ||
       !/^[A-Za-z0-9_]+$/.test(bot.username)) {
-    return result(false, 'getMe no devolvió una identidad de bot válida');
+    return result(false, 'getMe did not return a valid bot identity');
   }
   return result(true, 'bot @' + display(bot.username));
 }
 
 async function checkChat() {
   if (!env.TG_TOKEN?.trim() || !env.TG_CHAT?.trim()) {
-    return result(false, 'sin comprobar: falta TG_TOKEN o TG_CHAT');
+    return result(false, 'not checked: TG_TOKEN or TG_CHAT is missing');
   }
   const response = await telegram('getChat', { chat_id: env.TG_CHAT });
   if (!response.ok) {
-    return result(false, response.detail + '; revisa TG_CHAT y que el usuario haya iniciado el bot con /start');
+    return result(false, response.detail + '; check TG_CHAT and ensure the user has started the bot with /start');
   }
   const type = response.data?.type;
   if (!['private', 'group', 'supergroup', 'channel'].includes(type)) {
-    return result(false, 'getChat no devolvió un tipo de chat válido');
+    return result(false, 'getChat did not return a valid chat type');
   }
   // Resolution does not prove delivery permission. This check sends no messages.
-  return result(true, 'tipo=' + type +
-    (type === 'private' ? '; el usuario debe haber iniciado el bot con /start; no se prueba el envío' : ''));
+  return result(true, 'type=' + type +
+    (type === 'private' ? '; the user must have started the bot with /start; message delivery is not tested' : ''));
 }
 
 async function checkEngine() {
-  if (!env.ENGINE_URL?.trim()) return result(false, 'sin comprobar: falta ENGINE_URL');
+  if (!env.ENGINE_URL?.trim()) return result(false, 'not checked: ENGINE_URL is missing');
   try {
     const url = new URL(env.ENGINE_URL);
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
-      return result(false, 'ENGINE_URL debe ser HTTP(S), sin credenciales en la URL');
+      return result(false, 'ENGINE_URL must use HTTP(S), with no credentials in the URL');
     }
   } catch {
-    return result(false, 'ENGINE_URL no es una URL válida');
+    return result(false, 'ENGINE_URL is not a valid URL');
   }
   const started = performance.now();
   try {
@@ -120,15 +120,15 @@ async function checkEngine() {
     await response.body?.cancel().catch(() => {});
     const reachable = response.ok || response.status === 405;
     return result(reachable, 'HTTP ' + response.status + '; ' + elapsed + ' ms' +
-      (response.status === 405 ? '; responde, pero no admite GET (endpoint POST)'
-        : reachable ? '' : '; el motor devolvió un estado no satisfactorio'));
+      (response.status === 405 ? '; reachable, but GET is not allowed (POST endpoint)'
+        : reachable ? '' : '; the engine returned an unsuccessful status'));
   } catch (error) {
     const elapsed = Math.round(performance.now() - started);
     const refused = error.code === 'ECONNREFUSED' || error.cause?.code === 'ECONNREFUSED' ||
       error.cause?.errors?.some(item => item.code === 'ECONNREFUSED');
-    return result(false, (refused ? 'el motor no está levantado (conexión rechazada)'
-      : error.name === 'TimeoutError' ? 'el motor no responde (tiempo de espera agotado)'
-        : 'el motor no está disponible; revisa conexión y configuración') + '; ' + elapsed + ' ms');
+    return result(false, (refused ? 'the engine is not up (connection refused)'
+      : error.name === 'TimeoutError' ? 'the engine is not responding (request timed out)'
+        : 'the engine is unavailable; check the connection and configuration') + '; ' + elapsed + ' ms');
   }
 }
 
@@ -151,7 +151,7 @@ async function portOwners() {
         }
         resolveOwners(owners.length ? owners.map(owner =>
           'PID ' + owner.pid + (owner.name ? ' (' + owner.name + ')' : '')).join(', ')
-          : 'proceso no identificable (lsof no disponible o sin permisos)');
+          : 'process could not be identified (lsof unavailable or insufficient permissions)');
       });
   });
 }
@@ -164,11 +164,11 @@ async function checkPort() {
       server.close(error => resolveProbe(error ? 'CLOSE_ERROR' : null));
     });
   });
-  if (code === null) return result(true, '127.0.0.1:8080 libre');
+  if (code === null) return result(true, '127.0.0.1:8080 is free');
   if (code === 'EADDRINUSE') {
-    return result(false, '127.0.0.1:8080 ocupado; ' + await portOwners());
+    return result(false, '127.0.0.1:8080 is in use; ' + await portOwners());
   }
-  return result(false, 'no se pudo comprobar 127.0.0.1:8080; revisa permisos locales');
+  return result(false, 'could not check 127.0.0.1:8080; check local permissions');
 }
 
 async function checkActions() {
@@ -176,15 +176,15 @@ async function checkActions() {
   try {
     data = JSON.parse(await readFile(join(ROOT, 'web', 'actions.json'), 'utf8'));
   } catch (error) {
-    return result(false, error.code === 'ENOENT' ? 'no existe'
-      : error instanceof SyntaxError ? 'JSON no válido' : 'no se puede leer');
+    return result(false, error.code === 'ENOENT' ? 'does not exist'
+      : error instanceof SyntaxError ? 'invalid JSON' : 'cannot be read');
   }
-  if (!Array.isArray(data?.actions)) return result(false, 'falta el array actions');
+  if (!Array.isArray(data?.actions)) return result(false, 'missing actions array');
   const automatic = data.actions.filter(action => action?.auto_execute === true).length;
   const held = data.actions.filter(action => action?.auto_execute === false).length;
   const invalid = data.actions.length - automatic - held;
   return result(invalid === 0, 'total=' + data.actions.length + '; auto_execute=true: ' +
-    automatic + '; auto_execute=false: ' + held + '; sin booleano válido: ' + invalid);
+    automatic + '; auto_execute=false: ' + held + '; without a valid boolean: ' + invalid);
 }
 
 async function checkModules() {
@@ -198,14 +198,14 @@ async function checkModules() {
     }
   }));
   return result(states.every(Boolean), files.map((file, index) =>
-    file + ': ' + (states[index] ? 'presente' : 'ausente o no accesible')).join('; '));
+    file + ': ' + (states[index] ? 'present' : 'missing or inaccessible')).join('; '));
 }
 
 async function safeCheck(check) {
   try {
     return await check();
   } catch {
-    return result(false, 'no se pudo completar la comprobación');
+    return result(false, 'could not complete the check');
   }
 }
 
@@ -220,9 +220,9 @@ async function main() {
     ['Telegram getMe', checkBot],
     ['Telegram getChat', checkChat],
     ['ENGINE_URL', checkEngine],
-    ['Puerto 8080', checkPort],
+    ['Port 8080', checkPort],
     ['web/actions.json', checkActions],
-    ['Módulos', checkModules],
+    ['Modules', checkModules],
   ];
   // Run independent checks together, but print one line per check in the requested order.
   const pending = checks.map(([, check]) => safeCheck(check));
@@ -230,11 +230,11 @@ async function main() {
     report(checks[index][0], await pending[index]);
   }
   process.exitCode = passed === 7 ? 0 : 1;
-  console.log((passed === 7 ? 'OK' : 'FAIL') + ' VEREDICTO: ' + passed +
-    '/7 comprobaciones correctas' + (passed === 7 ? '; listo.' : '; revisa los FAIL.'));
+  console.log((passed === 7 ? 'OK' : 'FAIL') + ' VERDICT: ' + passed +
+    '/7 checks passed' + (passed === 7 ? '; ready.' : '; review the FAILs.'));
 }
 
 void main().catch(() => {
   process.exitCode = 1;
-  console.log('FAIL VEREDICTO: no se pudo completar el preflight.');
+  console.log('FAIL VERDICT: could not complete preflight.');
 });

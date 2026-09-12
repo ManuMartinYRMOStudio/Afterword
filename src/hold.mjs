@@ -1,36 +1,36 @@
-// src/hold.mjs — el freno de Telegram de AfterWord.
+// src/hold.mjs — AfterWord's Telegram hold.
 //
-// Una acción retenida (auto_execute: false) llega del motor con dos campos ya
-// calculados: `canonical`, la cadena JSON canónica sobre type + payload, y
-// `hash`, su SHA-256. Este módulo guarda esa cadena TAL CUAL LLEGÓ, la enseña
-// en Telegram con dos botones y, al aprobar, vuelve a hashear ESA MISMA cadena
-// guardada. Coinciden → APROBADO. Difieren → RECHAZADO, con los dos hashes.
+// A held action (auto_execute: false) arrives from the engine with two fields
+// already computed: `canonical`, the canonical JSON string over type + payload,
+// and `hash`, its SHA-256. This module stores that string EXACTLY AS IT ARRIVED,
+// shows it in Telegram with two buttons and, on approval, re-hashes THAT SAME
+// stored string. Match → APPROVED. Mismatch → REJECTED, with both hashes.
 //
-// Lo que se enseña y lo que se sella son los mismos bytes: la ficha se pinta
-// LEYENDO la cadena canónica guardada (JSON.parse, solo lectura), nunca desde
-// el objeto `payload`. Si un valor no cabe en Telegram, la ficha lo dice y
-// recuerda que el sello cubre el contenido completo.
+// What is shown and what is sealed are the same bytes: the card is rendered by
+// READING the stored canonical string (JSON.parse, read-only), never from the
+// `payload` object. If a value does not fit in Telegram, the card says so and
+// reminds that the seal covers the full content.
 //
-// Reglas que no se negocian (00-BRIEF-AGENTES.md §4, §6 y §7):
-//   · NUNCA serializa. No hay JSON.stringify sobre `canonical` ni sobre la
-//     acción en el camino de verificación. JSON.stringify aparece una sola vez,
-//     para codificar el cuerpo de las peticiones a la API de Telegram.
-//   · answerCallbackQuery va lo primero, antes de tocar estado o editar nada.
-//   · El offset de getUpdates se avanza SIEMPRE, también en updates ignoradas o
-//     que fallan. timeout=30. Ante un 409, un deleteWebhook y reintentar.
-//   · callback_data = verbo de una letra + id, dentro del tope de 64 bytes.
-//   · Solo se acepta una pulsación si chat_id Y from.id coinciden con TG_CHAT.
-//   · El motivo de retención se muestra en castellano claro, nunca el código.
+// Non-negotiable rules (00-BRIEF-AGENTES.md §4, §6 and §7):
+//   · NEVER serialises. No JSON.stringify over `canonical` or over the action
+//     in the verification path. JSON.stringify appears exactly once, to encode
+//     the body of requests to the Telegram API.
+//   · answerCallbackQuery goes first, before touching state or editing anything.
+//   · The getUpdates offset is ALWAYS advanced, also on ignored or failing
+//     updates. timeout=30. On a 409, one deleteWebhook and retry.
+//   · callback_data = one-letter verb + id, within the 64-byte cap.
+//   · A press is accepted only if chat_id AND from.id both equal TG_CHAT.
+//   · The hold reason is shown in plain English, never the raw code.
 //
-// Para forzar el rechazo ante la cámara sin tocar el puente: escribir en el
-// chat del bot «/tamper a4» (o «/tamper» a secas, que altera la última
-// propuesta decidida). Solo lo acepta el chat configurado.
+// To force the refusal on camera without touching the bridge: type
+// "/tamper a4" in the bot chat (or bare "/tamper", which alters the last
+// decided proposal). Only the configured chat is accepted.
 //
-// La consola no imprime el token, el chat, la cadena canónica ni excepciones
-// sin filtrar: ese terminal sale en el vídeo.
+// The console never prints the token, the chat, the canonical string or
+// unfiltered exceptions: that terminal is on camera.
 //
-// Importar este módulo no tiene efectos: nada lee .env, nada abre red y nada
-// arranca hasta que se llama a sendProposal() o startPolling().
+// Importing this module has no side effects: nothing reads .env, nothing opens
+// the network and nothing starts until sendProposal() or startPolling() is called.
 
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -39,42 +39,42 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const TELEGRAM_API = 'https://api.telegram.org';
-const CALLBACK_DATA_MAX_BYTES = 64; // tope de Telegram: 1–64 bytes
+const CALLBACK_DATA_MAX_BYTES = 64; // Telegram's cap: 1–64 bytes
 const LONG_POLL_TIMEOUT_S = 30;
 const LONG_POLL_ABORT_MS = (LONG_POLL_TIMEOUT_S + 15) * 1000;
 const REQUEST_TIMEOUT_MS = 15_000;
 const RETRY_DELAY_MS = 2_000;
 const CONFLICT_DELAY_MS = 3_000;
 const MAX_TITLE_CHARS = 200;
-const MAX_TEXT_CHARS = 4_000; // Telegram corta en 4096
+const MAX_TEXT_CHARS = 4_000; // Telegram cuts at 4096
 const TAMPER_COMMAND = '/tamper';
 
-// El código del motor nunca llega a la pantalla: se traduce aquí.
+// The engine's code never reaches the screen: it is translated here.
 const HOLD_REASON_TEXT = {
-  irreversible_type: 'Esto no se puede deshacer',
-  unknown_type: 'No sé qué es esto',
-  missing_required_parameter: 'Falta un dato que la reunión no dio',
+  irreversible_type: 'This cannot be undone',
+  unknown_type: 'I do not know what this is',
+  missing_required_parameter: 'A required value was not supplied in the meeting',
 };
-const HOLD_REASON_FALLBACK = 'Retenida para que la revise una persona';
+const HOLD_REASON_FALLBACK = 'Held for a person to review';
 
 const TYPE_LABEL = {
-  email: 'Correo',
-  listing_publish: 'Publicación de anuncio',
-  calendar_event: 'Cita',
-  task: 'Tarea',
-  note: 'Nota',
-  unknown: 'Acción desconocida',
+  email: 'Email',
+  listing_publish: 'Listing publication',
+  calendar_event: 'Calendar event',
+  task: 'Task',
+  note: 'Note',
+  unknown: 'Unknown action',
 };
 
 /**
  * @typedef {object} Proposal
  * @property {string} id
- * @property {string} canonical   La cadena tal cual llegó del motor. Nunca se reconstruye.
- * @property {string} hash        El SHA-256 que llegó con ella.
- * @property {object} action      La acción completa: título, resumen y motivo (metadatos de presentación).
- * @property {{type:string, payload:object}} sealed   Lectura de la cadena canónica: lo que se pinta.
+ * @property {string} canonical   The string exactly as it arrived from the engine. Never rebuilt.
+ * @property {string} hash        The SHA-256 that arrived with it.
+ * @property {object} action      The full action: title, summary and reason (presentation metadata).
+ * @property {{type:string, payload:object}} sealed   Read from the canonical string: what gets rendered.
  * @property {'pending'|'approved'|'refused'} status
- * @property {number|null} message_id   Mensaje de Telegram que enseñó la ficha.
+ * @property {number|null} message_id   Telegram message that showed the card.
  * @property {string|number|null} chat_id
  * @property {{ok:boolean, expected:string, actual:string}|null} check
  * @property {'approved'|'retained'|'mismatch'|'tampered'|null} decision
@@ -84,7 +84,7 @@ const TYPE_LABEL = {
 const proposals = new Map();
 let env = null;
 let poller = null;
-let lastOffset = 0; // sobrevive a stop()/startPolling() dentro del mismo proceso
+let lastOffset = 0; // survives stop()/startPolling() within the same process
 let lastProposedId = null;
 let lastDecidedId = null;
 
@@ -92,7 +92,7 @@ const log = (...parts) => console.log('[hold]', ...parts);
 const sameId = (a, b) => a !== undefined && a !== null && String(a) === String(b);
 const lookup = (table, key) => (typeof key === 'string' && Object.hasOwn(table, key) ? table[key] : undefined);
 
-/** Resumen de un error apto para una consola que sale en cámara: sin token, sin URL, acotado. */
+/** Error summary fit for a console that is on camera: no token, no URL, bounded. */
 function describeError(err) {
   let text = `${err?.name ?? 'Error'}: ${err?.message ?? String(err)}`;
   if (env?.token) text = text.split(env.token).join('<token>');
@@ -100,7 +100,7 @@ function describeError(err) {
   return text.length > 160 ? `${text.slice(0, 159)}…` : text;
 }
 
-/** Espera `ms`, o menos si la señal se aborta (así stop() no deja esperas colgando). */
+/** Waits `ms`, or less if the signal aborts (so stop() leaves no waits hanging). */
 function sleep(ms, signal) {
   return new Promise((done) => {
     const finish = () => {
@@ -115,7 +115,7 @@ function sleep(ms, signal) {
 }
 
 // ---------------------------------------------------------------------------
-// .env — se lee la primera vez que hace falta, nunca al importar.
+// .env — read the first time it is needed, never on import.
 // ---------------------------------------------------------------------------
 
 function loadEnv() {
@@ -125,29 +125,29 @@ function loadEnv() {
     const file = candidates.find((path) => existsSync(path));
     if (!file) {
       throw new Error(
-        `Falta el fichero .env (buscado en ${candidates[0]}). ` +
-          'Copia .env.example a .env y rellena TG_TOKEN y TG_CHAT.',
+        `Missing .env file (looked in ${candidates[0]}). ` +
+          'Copy .env.example to .env and fill in TG_TOKEN and TG_CHAT.',
       );
     }
     try {
-      process.loadEnvFile(file); // no pisa variables que ya vengan del entorno
+      process.loadEnvFile(file); // does not override variables already in the environment
     } catch (err) {
-      throw new Error(`No se pudo leer ${file}: ${err?.message ?? err}`);
+      throw new Error(`Could not read ${file}: ${err?.message ?? err}`);
     }
   }
   const token = String(process.env.TG_TOKEN ?? '').trim();
   const chat = String(process.env.TG_CHAT ?? '').trim();
-  if (!token) throw new Error('TG_TOKEN está vacío (en .env o en el entorno del proceso): es el token del bot que da @BotFather.');
-  if (!chat) throw new Error('TG_CHAT está vacío (en .env o en el entorno del proceso): es el id del chat privado que aprueba.');
+  if (!token) throw new Error('TG_TOKEN is empty (in .env or in the process environment): it is the bot token from @BotFather.');
+  if (!chat) throw new Error('TG_CHAT is empty (in .env or in the process environment): it is the id of the private chat that approves.');
   if (chat.startsWith('-')) {
-    log('aviso: TG_CHAT parece un grupo. La regla exige chat privado (chat_id y from.id iguales a TG_CHAT); en un grupo ninguna pulsación se aceptará.');
+    log('warning: TG_CHAT looks like a group. The rule requires a private chat (chat_id and from.id equal to TG_CHAT); in a group no press will be accepted.');
   }
   env = { token, chat };
   return env;
 }
 
 // ---------------------------------------------------------------------------
-// Telegram — una sola función habla con la API. El token nunca se imprime.
+// Telegram — one function talks to the API. The token is never printed.
 // ---------------------------------------------------------------------------
 
 async function tgRequest(method, params = {}, signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS)) {
@@ -155,7 +155,7 @@ async function tgRequest(method, params = {}, signal = AbortSignal.timeout(REQUE
   const res = await fetch(`${TELEGRAM_API}/bot${token}/${method}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(params), // el cuerpo de la petición; aquí nunca viaja `canonical`
+    body: JSON.stringify(params), // the request body; `canonical` never travels here
     signal,
   });
   let body = null;
@@ -170,18 +170,18 @@ async function tgRequest(method, params = {}, signal = AbortSignal.timeout(REQUE
 async function tg(method, params) {
   const { status, body } = await tgRequest(method, params);
   if (!body || body.ok !== true) {
-    throw new Error(`Telegram ${method} → HTTP ${status}: ${body?.description ?? 'respuesta no válida'}`);
+    throw new Error(`Telegram ${method} → HTTP ${status}: ${body?.description ?? 'invalid response'}`);
   }
   return body.result;
 }
 
 // ---------------------------------------------------------------------------
-// La atadura por hash. Esta es la tesis del proyecto y son cuatro líneas.
+// The hash binding. This is the project's thesis and it is four lines.
 // ---------------------------------------------------------------------------
 
 /**
- * Re-hashea la cadena guardada, tal cual llegó, y la compara con el hash que
- * llegó con ella. Nada se reconstruye ni se reserializa.
+ * Re-hashes the stored string, exactly as it arrived, and compares it with the
+ * hash that arrived with it. Nothing is rebuilt or re-serialised.
  */
 function verify(proposal) {
   const actual = createHash('sha256').update(proposal.canonical, 'utf8').digest('hex');
@@ -190,10 +190,10 @@ function verify(proposal) {
 }
 
 /**
- * Lee type + payload DE la cadena canónica. Solo se parsea para pintar la
- * ficha; el hash sigue calculándose sobre la cadena guardada. Devuelve null si
- * la cadena no describe {type, payload}: entonces no hay nada que enseñar y la
- * propuesta se rechaza antes de mandar ninguna tarjeta.
+ * Reads type + payload FROM the canonical string. It is only parsed to render
+ * the card; the hash is still computed over the stored string. Returns null if
+ * the string does not describe {type, payload}: then there is nothing to show
+ * and the proposal is refused before any card is sent.
  */
 function readSealed(canonical) {
   let parsed;
@@ -208,7 +208,7 @@ function readSealed(canonical) {
   return { type: parsed.type, payload: parsed.payload };
 }
 
-/** Comparación informativa entre lo que trae el objeto y lo que ata la cadena. */
+/** Informational comparison between what the object carries and what the string binds. */
 function sealedMismatch(sealed, action) {
   if (sealed.type !== action.type) return 'type';
   const shown = action.payload && typeof action.payload === 'object' ? action.payload : {};
@@ -229,10 +229,10 @@ function sameValue(a, b) {
 }
 
 // ---------------------------------------------------------------------------
-// Texto de las fichas, en castellano claro.
+// Card text, in plain English.
 // ---------------------------------------------------------------------------
 
-/** Recorta sin partir un par sustituto (un emoji a medias haría fallar sendMessage). */
+/** Cuts without splitting a surrogate pair (half an emoji would make sendMessage fail). */
 function cutAt(text, max) {
   let cut = max;
   const code = text.charCodeAt(cut - 1);
@@ -245,13 +245,13 @@ function clip(text, max) {
   return s.length <= max ? s : `${cutAt(s, max - 1)}…`;
 }
 
-/** Una sola línea: ningún salto (ASCII o Unicode) puede fingir secciones de la ficha. */
+/** One line only: no line break (ASCII or Unicode) can fake a section of the card. */
 function oneLine(value) {
   return String(value).replace(/\r\n?|[\n\v\f\u0085\u2028\u2029]/g, ' ⏎ ');
 }
 
 function describe(proposal) {
-  const label = lookup(TYPE_LABEL, proposal.sealed.type) ?? 'Acción';
+  const label = lookup(TYPE_LABEL, proposal.sealed.type) ?? 'Action';
   const title = proposal.action?.title ?? proposal.sealed.type;
   return `${label} — ${clip(oneLine(title), MAX_TITLE_CHARS)}`;
 }
@@ -262,12 +262,12 @@ function holdReasonText(action, sealedPayload) {
     const missing = Object.entries(sealedPayload)
       .filter(([, value]) => value === null || value === undefined)
       .map(([key]) => oneLine(key));
-    if (missing.length) return `${base} (falta: ${missing.join(', ')})`;
+    if (missing.length) return `${base} (missing: ${missing.join(', ')})`;
   }
   return base;
 }
 
-/** Aplana valores anidados en pares [ruta, valor] para que nada quede como "[object Object]". */
+/** Flattens nested values into [path, value] pairs so nothing is left as "[object Object]". */
 function flatten(prefix, value, out) {
   if (value === null || value === undefined) {
     out.push([prefix, null]);
@@ -283,18 +283,18 @@ function flatten(prefix, value, out) {
   }
 }
 
-/** Los valores se enseñan completos, leídos de la cadena sellada. */
+/** Values are shown in full, read from the sealed string. */
 function payloadLines(sealedPayload) {
   const pairs = [];
   for (const [key, value] of Object.entries(sealedPayload)) flatten(key, value, pairs);
-  if (!pairs.length) return ['· (sin datos)'];
-  return pairs.map(([path, value]) => (value === null ? `· ${oneLine(path)}: — falta` : `· ${oneLine(path)}: ${oneLine(value)}`));
+  if (!pairs.length) return ['· (no data)'];
+  return pairs.map(([path, value]) => (value === null ? `· ${oneLine(path)}: — missing` : `· ${oneLine(path)}: ${oneLine(value)}`));
 }
 
 /**
- * Une cabecera, cuerpo y cola. Si el cuerpo no cabe en Telegram, se recorta y
- * la ficha lo dice en voz alta: nunca se aprueba en silencio algo que no se vio.
- * El hash va en la cola y no se corta jamás.
+ * Joins head, body and tail. If the body does not fit in Telegram it is cut and
+ * the card says so out loud: nothing is silently approved that was not seen.
+ * The hash lives in the tail and is never cut.
  */
 function assemble(head, middle, tail) {
   const headText = head.join('\n');
@@ -303,7 +303,7 @@ function assemble(head, middle, tail) {
   const budget = Math.max(MAX_TEXT_CHARS - headText.length - tailText.length - 2, 80);
   if (middleText.length > budget) {
     const note = (hidden) =>
-      `\n⚠️ Recortado para caber en Telegram: ${hidden} caracteres no se muestran. El sello SHA-256 cubre el contenido completo.`;
+      `\n⚠️ Truncated to fit Telegram: ${hidden} characters not shown. The SHA-256 seal covers the full content.`;
     const kept = Math.max(budget - note(middleText.length).length - 1, 0);
     const shown = cutAt(middleText, kept);
     middleText = `${shown}…${note(middleText.length - shown.length)}`;
@@ -312,16 +312,16 @@ function assemble(head, middle, tail) {
 }
 
 function cardText(proposal) {
-  const head = [`🔒 RETENIDA · ${oneLine(proposal.id)}`, describe(proposal)];
+  const head = [`🔒 HELD · ${oneLine(proposal.id)}`, describe(proposal)];
   if (proposal.action?.summary) head.push(clip(oneLine(proposal.action.summary), MAX_TITLE_CHARS));
   const middle = [
     '',
-    `Por qué se retiene: ${holdReasonText(proposal.action, proposal.sealed.payload)}`,
+    `Why this is held: ${holdReasonText(proposal.action, proposal.sealed.payload)}`,
     '',
-    'Lo que haría si se aprueba (leído de los bytes sellados):',
+    'What would happen if approved (read from sealed bytes):',
     ...payloadLines(proposal.sealed.payload),
   ];
-  const tail = ['', 'SHA-256 de lo que se aprueba:', proposal.hash];
+  const tail = ['', 'SHA-256 of what you approve:', proposal.hash];
   return assemble(head, middle, tail);
 }
 
@@ -330,29 +330,29 @@ function decidedText(proposal) {
   const head = [];
   const tail = [];
   if (proposal.status === 'approved') {
-    head.push(`✅ APROBADO · ${id}`, describe(proposal));
-    tail.push('', 'Liberado: lo aprobado es exactamente lo que se mostró.', 'SHA-256:', proposal.check.expected);
+    head.push(`✅ APPROVED · ${id}`, describe(proposal));
+    tail.push('', 'Released: what was approved is exactly what was shown.', 'SHA-256:', proposal.check.expected);
   } else if (proposal.decision === 'retained') {
-    head.push(`⛔ RETENIDO · ${id}`, describe(proposal));
-    tail.push('', 'No se libera. Lo ha retenido la persona.');
+    head.push(`⛔ HELD · ${id}`, describe(proposal));
+    tail.push('', 'Not released. You chose to hold it.');
   } else {
-    head.push(`⛔ RECHAZADO · ${id}`, describe(proposal));
+    head.push(`⛔ REJECTED · ${id}`, describe(proposal));
     tail.push(
       '',
-      'Lo que se iba a ejecutar ya no es lo que se mostró. No se libera.',
-      'Hash mostrado (esperado):',
+      'What would run is no longer what was shown. Not released.',
+      'Expected hash (shown):',
       proposal.check.expected,
-      'Hash actual (recalculado):',
+      'Actual hash (recomputed):',
       proposal.check.actual,
     );
   }
   return assemble(head, [], tail);
 }
 
-/** Edita la ficha con el veredicto. Sin reply_markup, los botones desaparecen. */
+/** Edits the card with the verdict. Without reply_markup the buttons disappear. */
 async function editCard(proposal) {
   if (proposal.message_id === null || proposal.message_id === undefined) {
-    log(`${proposal.id}: no hay tarjeta que editar (el envío a Telegram no llegó a completarse)`);
+    log(`${proposal.id}: no card to edit (the Telegram send did not complete)`);
     return;
   }
   try {
@@ -363,51 +363,52 @@ async function editCard(proposal) {
       link_preview_options: { is_disabled: true },
     });
   } catch (err) {
-    log(`no se pudo editar la tarjeta ${proposal.id}: ${describeError(err)}`);
+    log(`could not edit card ${proposal.id}: ${describeError(err)}`);
   }
 }
 
 // ---------------------------------------------------------------------------
-// API pública — exactamente cuatro cosas.
+// Public API — exactly four things.
 // ---------------------------------------------------------------------------
 
 function validateAction(action) {
   if (!action || typeof action !== 'object' || Array.isArray(action)) {
-    throw new TypeError('sendProposal: se esperaba la acción resuelta que emite el motor');
+    throw new TypeError('sendProposal: expected the resolved action emitted by the engine');
   }
   const { id, canonical, hash } = action;
   if (typeof id !== 'string' || id === '' || !/^[^\s\p{C}]+$/u.test(id)) {
-    throw new TypeError('sendProposal: la acción no trae un `id` válido (sin espacios ni caracteres de control); sin id no hay botón de aprobar');
+    throw new TypeError('sendProposal: the action has no valid `id` (no whitespace or control characters); without an id there is no approve button');
   }
   if (typeof canonical !== 'string' || canonical === '') {
     throw new TypeError(
-      `sendProposal(${id}): \`canonical\` tiene que llegar como cadena desde el motor. ` +
-        'El puente nunca serializa: no se reconstruye desde el objeto.',
+      `sendProposal(${id}): \`canonical\` must arrive as a string from the engine. ` +
+        'The bridge never serialises: it is not rebuilt from the object.',
     );
   }
   if (typeof hash !== 'string' || !/^[0-9a-fA-F]{64}$/.test(hash)) {
-    throw new TypeError(`sendProposal(${id}): \`hash\` tiene que ser el SHA-256 hexadecimal (64 caracteres) de \`canonical\``);
+    throw new TypeError(`sendProposal(${id}): \`hash\` must be the hexadecimal SHA-256 (64 characters) of \`canonical\``);
   }
   const sealed = readSealed(canonical);
   if (!sealed) {
     throw new TypeError(
-      `sendProposal(${id}): la cadena canónica no describe {type, payload}; no se puede enseñar lo que se sellaría, así que no se manda ninguna tarjeta`,
+      `sendProposal(${id}): the canonical string does not describe {type, payload}; what would be sealed cannot be shown, so no card is sent`,
     );
   }
   return { id, canonical, hash, sealed };
 }
 
 /**
- * Guarda {id, canonical, hash, status:'pending'} con la cadena tal cual llegó y
- * manda la ficha a Telegram con los botones Aprobar y Retener. La ficha se
- * pinta leyendo la cadena canónica: lo mostrado y lo sellado son los mismos bytes.
+ * Stores {id, canonical, hash, status:'pending'} with the string exactly as it
+ * arrived and sends the card to Telegram with the APPROVE and HOLD buttons. The
+ * card is rendered by reading the canonical string: what is shown and what is
+ * sealed are the same bytes.
  *
- * Si Telegram falla, la propuesta queda guardada como `pending` sin tarjeta y
- * el error se propaga para que el puente lo vea. Si el id ya existía, la
- * propuesta nueva sustituye a la anterior y la tarjeta vieja deja de valer
- * (cada pulsación se ata al message_id de la tarjeta que enseñó esos bytes).
+ * If Telegram fails, the proposal stays stored as `pending` without a card and
+ * the error propagates so the bridge sees it. If the id already existed, the
+ * new proposal replaces the previous one and the old card no longer counts
+ * (every press is bound to the message_id of the card that showed those bytes).
  *
- * @param {object} action  Acción resuelta del motor (con `canonical` y `hash`).
+ * @param {object} action  Resolved action from the engine (with `canonical` and `hash`).
  * @returns {Promise<{id:string, status:'pending', hash:string, message_id:number|null}>}
  */
 export async function sendProposal(action) {
@@ -420,20 +421,20 @@ export async function sendProposal(action) {
     const bytes = Buffer.byteLength(data, 'utf8');
     if (bytes > CALLBACK_DATA_MAX_BYTES) {
       throw new RangeError(
-        `sendProposal(${id}): callback_data de ${bytes} bytes supera el tope de ${CALLBACK_DATA_MAX_BYTES}; ` +
-          'Telegram rechazaría el mensaje entero, no el botón',
+        `sendProposal(${id}): callback_data of ${bytes} bytes exceeds the ${CALLBACK_DATA_MAX_BYTES}-byte cap; ` +
+          'Telegram would reject the whole message, not the button',
       );
     }
   }
 
   if (proposals.has(id)) {
-    log(`propuesta ${id} sustituida por una nueva; la tarjeta anterior queda sin efecto`);
+    log(`proposal ${id} replaced by a new one; the previous card no longer counts`);
   }
 
   /** @type {Proposal} */
   const proposal = {
     id,
-    canonical, // tal cual llegó
+    canonical, // exactly as it arrived
     hash,
     action,
     sealed,
@@ -448,13 +449,13 @@ export async function sendProposal(action) {
 
   const early = verify(proposal);
   if (!early.ok) {
-    log(`aviso ${id}: el hash recibido no es el SHA-256 de la cadena canónica recibida; la aprobación se rechazará`);
-    log(`  hash recibido:    ${early.expected}`);
-    log(`  hash recalculado: ${early.actual}`);
+    log(`warning ${id}: the received hash is not the SHA-256 of the received canonical string; approval will be rejected`);
+    log(`  received hash:   ${early.expected}`);
+    log(`  recomputed hash: ${early.actual}`);
   }
   const mismatch = sealedMismatch(sealed, action);
   if (mismatch) {
-    log(`aviso ${id}: el objeto de la acción y la cadena canónica no coinciden en ${mismatch}. La ficha enseña la cadena sellada, que es lo que se aprueba.`);
+    log(`warning ${id}: the action object and the canonical string differ at ${mismatch}. The card shows the sealed string, which is what you approve.`);
   }
 
   const sent = await tg('sendMessage', {
@@ -464,21 +465,21 @@ export async function sendProposal(action) {
     reply_markup: {
       inline_keyboard: [
         [
-          { text: '✅ Aprobar', callback_data: approveData },
-          { text: '⛔ Retener', callback_data: retainData },
+          { text: '✅ APPROVE', callback_data: approveData },
+          { text: '⛔ HOLD', callback_data: retainData },
         ],
       ],
     },
   });
   proposal.message_id = sent?.message_id ?? null;
   proposal.chat_id = sent?.chat?.id ?? chat;
-  log(`tarjeta ${id} enviada (mensaje ${proposal.message_id})`);
+  log(`card ${id} sent (message ${proposal.message_id})`);
 
   return { id, status: proposal.status, hash, message_id: proposal.message_id };
 }
 
 /**
- * Estado de una propuesta. `null` si nunca se propuso ese id.
+ * Status of a proposal. `null` if that id was never proposed.
  * @param {string} id
  * @returns {'pending'|'approved'|'refused'|null}
  */
@@ -487,28 +488,28 @@ export function getStatus(id) {
   return proposal ? proposal.status : null;
 }
 
-/** Comando de texto «/tamper [id]» desde el chat configurado: fuerza el rechazo ante la cámara. */
+/** Text command "/tamper [id]" from the configured chat: forces the refusal on camera. */
 async function handleCommand(message) {
   const text = typeof message.text === 'string' ? message.text.trim() : '';
   const [word, ...rest] = text.split(/\s+/);
-  if (!word || word.split('@')[0] !== TAMPER_COMMAND) return; // cualquier otro mensaje se ignora
+  if (!word || word.split('@')[0] !== TAMPER_COMMAND) return; // any other message is ignored
 
   const { chat } = loadEnv();
   if (!sameId(message.chat?.id, chat) || !sameId(message.from?.id, chat)) {
-    log('comando rechazado: chat o usuario no autorizado');
+    log('command rejected: chat or user not authorised');
     return;
   }
   const wanted = rest[0] ?? '';
   const id = wanted || lastDecidedId || lastProposedId;
   if (!id || !proposals.has(id)) {
-    log(`comando ${TAMPER_COMMAND}: no hay propuesta que manipular`);
+    log(`command ${TAMPER_COMMAND}: no proposal to tamper with`);
     try {
       await tg('sendMessage', {
         chat_id: chat,
-        text: wanted ? `No conozco ninguna propuesta «${clip(oneLine(wanted), 40)}».` : 'Aún no hay ninguna propuesta que manipular.',
+        text: wanted ? `No proposal named "${clip(oneLine(wanted), 40)}".` : 'There is no proposal to tamper with yet.',
       });
     } catch (err) {
-      log(`no se pudo contestar al comando: ${describeError(err)}`);
+      log(`could not answer the command: ${describeError(err)}`);
     }
     return;
   }
@@ -516,51 +517,51 @@ async function handleCommand(message) {
 }
 
 /**
- * Trata una update de getUpdates. Cuando entra aquí, el offset ya está avanzado.
+ * Handles one getUpdates update. By the time it gets here, the offset is already advanced.
  */
 async function handleUpdate(update) {
   const press = update?.callback_query;
   if (!press) {
     if (update?.message) await handleCommand(update.message);
-    return; // no es una pulsación: ignorada
+    return; // not a press: ignored
   }
 
-  // 1 · LO PRIMERO: contestar, para que el botón deje de girar. Aún no se ha
-  //     tocado estado ni se ha editado nada.
+  // 1 · FIRST: answer, so the button stops spinning. No state has been touched
+  //     and nothing has been edited yet.
   try {
     await tg('answerCallbackQuery', { callback_query_id: press.id });
   } catch (err) {
-    log(`answerCallbackQuery falló (${describeError(err)}); la pulsación se trata igual`);
+    log(`answerCallbackQuery failed (${describeError(err)}); the press is handled anyway`);
   }
 
-  // 2 · Solo decide el chat configurado: chat_id Y from.id iguales a TG_CHAT.
+  // 2 · Only the configured chat decides: chat_id AND from.id equal to TG_CHAT.
   const { chat } = loadEnv();
   if (!sameId(press.message?.chat?.id, chat) || !sameId(press.from?.id, chat)) {
-    log('pulsación rechazada: chat o usuario no autorizado');
+    log('press rejected: chat or user not authorised');
     return;
   }
 
-  // 3 · Verbo de una letra + id.
+  // 3 · One-letter verb + id.
   const data = typeof press.data === 'string' ? press.data : '';
   const verb = data.slice(0, 1);
   const id = data.slice(1);
   if ((verb !== 'A' && verb !== 'R') || !id) {
-    log('pulsación ignorada: callback_data no reconocido');
+    log('press ignored: unrecognised callback_data');
     return;
   }
 
   const proposal = proposals.get(id);
   if (!proposal) {
-    log(`pulsación ignorada: propuesta ${clip(oneLine(id), 40)} desconocida`);
+    log(`press ignored: unknown proposal ${clip(oneLine(id), 40)}`);
     return;
   }
-  // La pulsación tiene que venir de la tarjeta que enseñó estos bytes.
+  // The press must come from the card that showed these bytes.
   if (proposal.message_id === null || !sameId(press.message?.message_id, proposal.message_id)) {
-    log(`pulsación ignorada: tarjeta antigua para ${id}`);
+    log(`press ignored: stale card for ${id}`);
     return;
   }
   if (proposal.status !== 'pending') {
-    log(`pulsación ignorada: ${id} ya está ${proposal.status}`);
+    log(`press ignored: ${id} is already ${proposal.status}`);
     return;
   }
 
@@ -568,30 +569,30 @@ async function handleUpdate(update) {
     proposal.status = 'refused';
     proposal.decision = 'retained';
     lastDecidedId = id;
-    log(`${id}: RETENIDO por la persona`);
+    log(`${id}: HELD by the person`);
     await editCard(proposal);
     return;
   }
 
-  // 4 · Aprobar. Lo único que libera es el hash de la cadena guardada.
+  // 4 · Approve. The only thing that releases is the hash of the stored string.
   const check = verify(proposal);
   proposal.check = check;
   proposal.status = check.ok ? 'approved' : 'refused';
   proposal.decision = check.ok ? 'approved' : 'mismatch';
   lastDecidedId = id;
   if (check.ok) {
-    log(`${id}: APROBADO (sha256 ${check.actual})`);
+    log(`${id}: APPROVED (sha256 ${check.actual})`);
   } else {
-    log(`${id}: RECHAZADO — los bytes no coinciden`);
-    log(`  hash mostrado (esperado): ${check.expected}`);
-    log(`  hash actual (recalculado): ${check.actual}`);
+    log(`${id}: REJECTED — the bytes do not match`);
+    log(`  expected hash (shown): ${check.expected}`);
+    log(`  actual hash (recomputed): ${check.actual}`);
   }
   await editCard(proposal);
 }
 
 async function pollLoop(state) {
-  let webhookCleared = false; // un deleteWebhook que haya llegado a Telegram desde el último 409
-  log(`sondeo iniciado (getUpdates, timeout=${LONG_POLL_TIMEOUT_S}s, offset=${lastOffset})`);
+  let webhookCleared = false; // a deleteWebhook that reached Telegram since the last 409
+  log(`polling started (getUpdates, timeout=${LONG_POLL_TIMEOUT_S}s, offset=${lastOffset})`);
 
   while (state.running) {
     state.controller = new AbortController();
@@ -605,7 +606,7 @@ async function pollLoop(state) {
       );
     } catch (err) {
       if (!state.running) break;
-      log(`getUpdates falló (${describeError(err)}); reintento en ${RETRY_DELAY_MS} ms`);
+      log(`getUpdates failed (${describeError(err)}); retrying in ${RETRY_DELAY_MS} ms`);
       await sleep(RETRY_DELAY_MS, signal);
       continue;
     }
@@ -613,50 +614,50 @@ async function pollLoop(state) {
 
     if (res.status === 409) {
       if (!webhookCleared) {
-        // Un deleteWebhook y reintentar. Si la llamada no llegó, se repite en el siguiente 409.
-        log('getUpdates devolvió 409 (había un webhook activo): deleteWebhook y reintento');
+        // One deleteWebhook and retry. If the call did not get through, it is repeated on the next 409.
+        log('getUpdates returned 409 (a webhook was active): deleteWebhook and retry');
         try {
           await tg('deleteWebhook', { drop_pending_updates: false });
           webhookCleared = true;
         } catch (err) {
-          log(`deleteWebhook falló (${describeError(err)}); se repetirá si el 409 persiste`);
+          log(`deleteWebhook failed (${describeError(err)}); it will be repeated if the 409 persists`);
           await sleep(RETRY_DELAY_MS, signal);
         }
       } else {
-        log(`getUpdates sigue en 409 tras borrar el webhook: otro proceso sondea con este token. Reintento en ${CONFLICT_DELAY_MS} ms`);
+        log(`getUpdates still returns 409 after deleting the webhook: another process is polling with this token. Retrying in ${CONFLICT_DELAY_MS} ms`);
         await sleep(CONFLICT_DELAY_MS, signal);
       }
       continue;
     }
-    webhookCleared = false; // cualquier respuesta que no sea 409 rearma el deleteWebhook
+    webhookCleared = false; // any non-409 response re-arms the deleteWebhook
 
     if (!res.body || res.body.ok !== true || !Array.isArray(res.body.result)) {
-      log(`getUpdates → HTTP ${res.status}: ${clip(oneLine(res.body?.description ?? 'respuesta no válida'), 120)}; reintento en ${RETRY_DELAY_MS} ms`);
+      log(`getUpdates → HTTP ${res.status}: ${clip(oneLine(res.body?.description ?? 'invalid response'), 120)}; retrying in ${RETRY_DELAY_MS} ms`);
       await sleep(RETRY_DELAY_MS, signal);
       continue;
     }
 
     for (const update of res.body.result) {
-      // SIEMPRE se avanza el offset, antes de tratar la update y pase lo que pase.
+      // The offset is ALWAYS advanced, before handling the update and whatever happens next.
       if (Number.isInteger(update?.update_id)) lastOffset = update.update_id + 1;
       try {
         await handleUpdate(update);
       } catch (err) {
-        log(`update ${update?.update_id ?? '?'} ignorada por error: ${describeError(err)}`);
+        log(`update ${update?.update_id ?? '?'} ignored after an error: ${describeError(err)}`);
       }
     }
   }
-  log('sondeo terminado');
+  log('polling stopped');
 }
 
 /**
- * Arranca el bucle de getUpdates (long polling, timeout=30). Devuelve la
- * función que lo para. Llamarlo dos veces devuelve el mismo stop.
+ * Starts the getUpdates loop (long polling, timeout=30). Returns the function
+ * that stops it. Calling it twice returns the same stop.
  * @returns {() => void}
  */
 export function startPolling() {
   if (poller) return poller.stop;
-  loadEnv(); // si falta el .env, falla aquí con un mensaje claro
+  loadEnv(); // if .env is missing, fail here with a clear message
   const state = { running: true, controller: null };
   const stop = () => {
     if (!state.running) return;
@@ -669,20 +670,20 @@ export function startPolling() {
   return stop;
 }
 
-/** Cambia un solo carácter del valor de `key` dentro de la cadena, por cirugía de texto. */
+/** Changes a single character of the value of `key` inside the string, by text surgery. */
 function alterOneCharacter(text, key) {
   const marker = `"${key}":"`;
   const at = text.indexOf(marker);
   let index = at >= 0 ? at + marker.length : -1;
   let where = key;
   if (index < 0 || index >= text.length) {
-    const first = text.indexOf('":"'); // primer valor de texto que haya
+    const first = text.indexOf('":"'); // the first string value there is
     index = first >= 0 ? first + 3 : -1;
-    where = 'el primer valor';
+    where = 'the first value';
   }
   if (index < 0 || index >= text.length) {
     index = Math.floor(text.length / 2);
-    where = 'la cadena';
+    where = 'the string';
   }
   const original = text[index];
   const replacement = original === 'x' ? 'y' : 'x';
@@ -690,23 +691,23 @@ function alterOneCharacter(text, key) {
 }
 
 /**
- * Altera un carácter del destinatario DENTRO de la cadena canónica guardada y
- * repite la comprobación por el mismo camino que una aprobación real. La
- * cadena ya no es la que se mostró, así que el resultado es RECHAZADO y la
- * tarjeta se edita enseñando los dos hashes.
+ * Alters one character of the recipient INSIDE the stored canonical string and
+ * repeats the check through the same path as a real approval. The string is no
+ * longer what was shown, so the result is REJECTED and the card is edited to
+ * show both hashes.
  *
- * También se dispara desde el chat con «/tamper [id]».
+ * Can also be triggered from the chat with "/tamper [id]".
  *
  * @param {string} id
  * @returns {Promise<{id:string, status:'approved'|'refused', expected:string, actual:string, before:string, after:string}>}
  */
 export async function tamperTest(id) {
   const proposal = proposals.get(id);
-  if (!proposal) throw new Error(`tamperTest(${id}): no hay ninguna propuesta con ese id`);
+  if (!proposal) throw new Error(`tamperTest(${id}): no proposal with that id`);
 
   const before = proposal.canonical;
   const { altered: after, where } = alterOneCharacter(before, 'to');
-  proposal.canonical = after; // se altera LA CADENA GUARDADA, que es lo que se re-hashea
+  proposal.canonical = after; // THE STORED STRING is altered, which is what gets re-hashed
 
   const check = verify(proposal);
   proposal.check = check;
@@ -714,10 +715,10 @@ export async function tamperTest(id) {
   proposal.decision = check.ok ? 'approved' : 'tampered';
   lastDecidedId = id;
 
-  log(`tamperTest(${id}): un carácter alterado en ${where === 'to' ? 'el destinatario' : where} de la cadena guardada`);
-  log(`  hash mostrado (esperado): ${check.expected}`);
-  log(`  hash actual (recalculado): ${check.actual}`);
-  log(`  resultado: ${proposal.status === 'refused' ? 'RECHAZADO' : 'APROBADO (no debería ocurrir)'}`);
+  log(`tamperTest(${id}): one character altered in ${where === 'to' ? 'the recipient' : where} of the stored string`);
+  log(`  expected hash (shown): ${check.expected}`);
+  log(`  actual hash (recomputed): ${check.actual}`);
+  log(`  result: ${proposal.status === 'refused' ? 'REJECTED' : 'APPROVED (should not happen)'}`);
 
   await editCard(proposal);
   return { id, status: proposal.status, expected: check.expected, actual: check.actual, before, after };

@@ -1,21 +1,21 @@
-// src/demo.mjs — ensayo del freno ante la cámara. Sin motor, sin puente, sin web.
+// src/demo.mjs — the hold, rehearsed on camera. No engine, no bridge, no web.
 //
 //   cd /Users/yrmostudio/afterword && node src/demo.mjs
 //
-// 1. Manda UNA ficha fija (la del correo de la demo) al chat de TG_CHAT.
-// 2. En el móvil: ✅ Aprobar → la ficha se edita en su sitio a APROBADO.
-// 3. Para forzar el rechazo: ENTER en esta consola, o «/tamper a4» en el chat.
-//    La ficha pasa a RECHAZADO con los dos hashes, y la consola los enseña.
+// 1. Sends ONE fixed card (the demo's email) to the TG_CHAT chat.
+// 2. On the phone: ✅ APPROVE → the card is edited in place to APPROVED.
+// 3. To force the refusal: ENTER in this terminal, or "/tamper a4" in the chat.
+//    The card turns into REJECTED with both hashes, and the console shows them.
 //
-// Lee TG_TOKEN y TG_CHAT del .env de la raíz del repo, a través de hold.mjs.
+// Reads TG_TOKEN and TG_CHAT from the .env at the repository root, through hold.mjs.
 
 import { createHash } from 'node:crypto';
 import { sendProposal, getStatus, startPolling, tamperTest } from './hold.mjs';
 
 const ID = 'a4';
 
-// La cadena canónica va literal, como la emitiría el motor, y su hash se
-// calculó una sola vez a partir de ella. Se comprueba al arrancar.
+// The canonical string is written literally, as the engine would emit it, and
+// its hash was computed once from it. Both are checked at startup.
 const CANONICAL =
   '{"payload":{"body":"3% + VAT, 90 days exclusive, asking price approx. €329,000","subject":"Listing agreement — Ruzafa","to":"david.whitmore@example.com"},"type":"email"}';
 const HASH = 'd5ccca115a92dfaa5da6418f91ad8c6b7dcd6c335e4221c96b33c60e90450ae2';
@@ -44,7 +44,7 @@ const say = (...parts) => console.log('[demo]', ...parts);
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 if (createHash('sha256').update(CANONICAL, 'utf8').digest('hex') !== HASH) {
-  console.error('[demo] La cadena literal y su hash no cuadran: no se manda nada. Revisa CANONICAL y HASH.');
+  console.error('[demo] The literal string and its hash do not match: nothing is sent. Check CANONICAL and HASH.');
   process.exit(1);
 }
 
@@ -54,22 +54,22 @@ const bye = (code) => {
   process.exit(code);
 };
 process.on('SIGINT', () => {
-  say('cortado.');
+  say('interrupted.');
   bye(130);
 });
 
 try {
-  stop = startPolling(); // antes de mandar la ficha, para no perder la pulsación
+  stop = startPolling(); // before sending the card, so the press is not missed
   await sendProposal(ACTION);
 } catch (err) {
   console.error('[demo]', err?.message ?? err);
   if (/403/.test(String(err?.message))) {
-    console.error('[demo] Un bot no puede escribir a quien no le ha escrito antes: abre el chat del bot en el móvil y pulsa Start.');
+    console.error('[demo] A bot cannot message someone who has never messaged it: open the bot chat on the phone and press Start.');
   }
   bye(1);
 }
 
-say('Ficha enviada. En el móvil: pulsa ✅ Aprobar (o ⛔ Retener).');
+say('Card sent. On the phone: press ✅ APPROVE (or ⛔ HOLD).');
 
 let status = 'pending';
 while (status === 'pending') {
@@ -78,18 +78,18 @@ while (status === 'pending') {
 }
 
 if (status === 'refused') {
-  say('Retenida desde el móvil. Fin.');
+  say('Held from the phone. Done.');
   bye(0);
 }
 
-say('APROBADO en el móvil: la ficha se ha editado en su sitio.');
-say('Para forzar el rechazo: pulsa ENTER aquí, o escribe /tamper a4 en el chat del bot.');
+say('APPROVED on the phone: the card has been edited in place.');
+say('To force the refusal: press ENTER here, or type /tamper a4 in the bot chat.');
 
 const fromKeyboard = new Promise((resolve) => {
-  if (!process.stdin.isTTY) return; // sin terminal, solo vale el comando del chat
+  if (!process.stdin.isTTY) return; // without a terminal, only the chat command works
   process.stdin.setEncoding('utf8');
   process.stdin.resume();
-  process.stdin.once('data', () => resolve('teclado'));
+  process.stdin.once('data', () => resolve('keyboard'));
 });
 const fromChat = (async () => {
   while (getStatus(ID) === 'approved') await sleep(400);
@@ -97,10 +97,10 @@ const fromChat = (async () => {
 })();
 
 const who = await Promise.race([fromKeyboard, fromChat]);
-if (who === 'teclado') {
+if (who === 'keyboard') {
   await tamperTest(ID);
 } else {
-  say('Rechazo forzado desde el chat.');
+  say('Refusal forced from the chat.');
 }
-say(`Estado final de ${ID}: ${getStatus(ID)}. Los dos hashes están en la ficha del móvil y en esta consola. Fin.`);
+say(`Final status of ${ID}: ${getStatus(ID)}. Both hashes are on the card on the phone and in this console. Done.`);
 bye(0);
