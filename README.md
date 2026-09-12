@@ -12,25 +12,37 @@ nothing else.
 |---|---|
 | `web/` | The two-pane page: `index.html`, `app.js`, `styles.css`, `transcript.json` (the demo meeting, turns `L01` to `L14`) and `actions.json` (the five actions the page shows). |
 | `src/hold.mjs` | The Telegram hold: cards, long polling, the hash check, `tamperTest()`. Tests in `src/hold.test.mjs`. |
-| `src/bridge.mjs` | The Node bridge: calls the engine, writes `web/actions.json`, sends held actions to Telegram, serves `web/` and `GET /api/status/:id`. |
+| `src/bridge.mjs` | The Node bridge: calls the engine, writes `web/actions.json`, sends held actions to Telegram, serves `web/` and `GET /api/status/:id`. Tests in `src/bridge.test.mjs`. |
 | `src/demo.mjs` | One fixed card to Telegram, with no engine, no bridge and no web. |
-| `services/extractor/` | The Python extraction engine: normalization, two model calls, validation, policy derivation, the canonical string and its SHA-256, and a pytest suite. |
+| `services/extractor/` | The Python extraction engine: normalization, two model calls, validation, policy derivation, the canonical string and its SHA-256, a FastAPI boundary and a pytest suite. |
 | `scripts/preflight.mjs` | Seven checks to run before a demo. |
+| `scripts/seal_actions.py` | Seals an actions file by calling the engine's own `canonicalize_execution()` and `hash_execution()`. Never reimplements them. |
 
 ## Current state
 
-`services/extractor/app.py` raises `NotImplementedError` in `create_app()`, and so does
-`run_extraction()` in `services/extractor/pipeline.py`. The engine's stages exist as functions with
-tests; there is no HTTP endpoint, so nothing answers `POST /extract`. The bridge therefore runs from
-`web/actions.json` on disk: when `ENGINE_URL` is unset or fails its six attempts, `processTranscript()`
-reads that file, logs `[executed]` for the auto-execute actions and sends the held ones to Telegram.
+The engine is complete and callable. `create_app()` in `services/extractor/app.py` builds the FastAPI
+application and the module ends in `app = create_app()`; `run_extraction()` in
+`services/extractor/pipeline.py` is implemented, and a `Procfile` and a root `requirements.txt` are in
+place for deployment. Whether an instance is serving at any given moment is a deployment question, not
+a repository one: point `ENGINE_URL` and `ENGINE_TOKEN` at a running instance and the bridge calls it,
+sending the token as `Authorization: Bearer`.
 
-As committed, `web/actions.json` is the page's fixture: `seconds` and `actions`, no `transcript` key,
-no `canonical` or `hash` on its two held actions (`r4`, `r5`). The bridge's `validateSnapshot()` needs
-`transcript` and `sendProposal()` needs `canonical` as a string, so that file drives the page but not
-the bridge. A file with `transcript`, plus `canonical` and `hash` on every held action, drives both;
-the page accepts that shape too (`normalise()` in `web/app.js`). The page fetches `transcript.json`
-and `actions.json` only and does not call `GET /api/status/:id`.
+The bridge does not depend on that. When `ENGINE_URL` is unset, `ENGINE_TOKEN` is missing, or the six
+attempts fail, `processTranscript()` falls back to `web/actions.json` on disk, logs `[executed]` for the
+auto-execute actions and sends the held ones to Telegram. That fallback is not a stub: it is the path
+the recorded demo runs on, and it is tested against the real Telegram API, not a mock.
+
+`web/actions.json` as committed is a sealed snapshot, not a hand-written fixture. It carries
+`transcript` and five actions, each with `canonical` and `hash`. Those two fields were produced by
+`scripts/seal_actions.py`, which imports `canonicalize_execution()` and `hash_execution()` from
+`services/extractor/derivation.py` and calls them unchanged. No JavaScript in this repository ever
+builds a canonical string; the seal always comes from the engine's own code, whether it arrives over
+HTTP or is written to disk ahead of time.
+
+The page reads `transcript.json` and `actions.json` on load, then polls `GET /api/status/:id` every two
+seconds for every card still held, moving it to done or refused on its own. A failed poll is ignored and
+retried; polling stops when nothing is held. Served as static files with no bridge behind them, held
+cards simply stay amber.
 
 ## The thesis
 
@@ -70,8 +82,8 @@ everywhere. Where this happens:
   `createHash('sha256').update(proposal.canonical, 'utf8')` compared with the stored `hash`. The only
   `JSON.stringify` in the file encodes Telegram request bodies.
 - `src/hold.mjs`, `handleUpdate()`: on Approve, `answerCallbackQuery` goes first, then `verify()`.
-  Match: status `approved`, card edited to APROBADO. Mismatch: status `refused`, card edited to
-  RECHAZADO showing both hashes (`decidedText()`). Only presses whose `chat_id` and `from.id` both
+  Match: status `approved`, card edited to APPROVED. Mismatch: status `refused`, card edited to
+  REJECTED showing both hashes (`decidedText()`). Only presses whose `chat_id` and `from.id` both
   equal `TG_CHAT` are accepted, and only from the message that showed the card.
 - `src/hold.mjs`, `readSealed()` renders the card by parsing the stored canonical string, never from
   the `payload` object, so what is shown is what is sealed; hashing still uses the raw string.
@@ -90,27 +102,29 @@ private chat id of the approver, who must have opened the bot and pressed Start,
 
        cp .env.example .env
 
-   `TG_TOKEN` and `TG_CHAT` are needed by everything below. `ENGINE_URL` and `PRINCIPAL` are read by
-   the bridge; with no endpoint to call, leave `ENGINE_URL` empty and the bridge falls back to the file
-   without attempting a call. `TRANSCRIPT_PATH` defaults to `web/sample.txt`, not in the repository;
-   when it is missing the bridge says so and falls back the same way. `.env` is ignored by git.
+   `TG_TOKEN` and `TG_CHAT` are needed by everything below. `ENGINE_URL`, `ENGINE_TOKEN` and
+   `PRINCIPAL` are read by the bridge; with no instance to call, leave `ENGINE_URL` empty and the
+   bridge falls back to the file without attempting a call. `TRANSCRIPT_PATH` defaults to
+   `web/transcript.json`; when the file is missing the bridge says so and falls back the same way.
+   `.env` is ignored by git and no value in it is ever printed.
 
 2. Preflight.
 
        node scripts/preflight.mjs
 
    Seven checks: the `.env` keys, Telegram `getMe` and `getChat`, `ENGINE_URL` reachability, port 8080
-   free, `web/actions.json` well formed, both Node modules present. Spanish output; exit code 0 only when
-   all seven pass. Today `ENGINE_URL` fails by construction and the `.env` check counts it as required,
-   so expect five of seven at best.
+   free, `web/actions.json` well formed, both Node modules present. Exit code 0 only when all seven pass.
+   Two of them report the environment rather than the code: `ENGINE_URL` fails whenever no engine
+   instance is reachable, and port 8080 fails once the bridge is already running on it. Read the lines,
+   not the score.
 
 3. The fastest way to see the hold work, with nothing else running.
 
        node src/demo.mjs
 
-   Sends one fixed card, the demo email, to `TG_CHAT`. Press Aprobar on the phone: the card is edited in
-   place to APROBADO. Then press Enter in the terminal, or type `/tamper a4` in the bot chat: the card is
-   edited to RECHAZADO with both hashes, printed in the terminal too. Retener ends the run without releasing.
+   Sends one fixed card, the demo email, to `TG_CHAT`. Press APPROVE on the phone: the card is edited in
+   place to APPROVED. Then press Enter in the terminal, or type `/tamper a4` in the bot chat: the card is
+   edited to REJECTED with both hashes, printed in the terminal too. HOLD ends the run without releasing.
 
 4. The bridge and the page.
 
@@ -120,17 +134,21 @@ private chat id of the approver, who must have opened the bot and pressed Start,
    or 404 for an unknown id), then loads `web/actions.json` as described under Current state. Console
    commands: `tamper <id>`, `list`, `quit`. On the page, "Turn this meeting into work" reveals the cards
    one by one: DONE for auto-execute actions, WAITING FOR YOU plus the hold reason for held ones, weakly
-   supported values flagged, hover to highlight the turns in `action_evidence`. The counter's seconds
-   come from `actions.json`. The Guardrail toggle renders the same actions with nothing held.
+   supported values flagged, hover to highlight the turns in `action_evidence`. Approve a card on the
+   phone and its card on the page turns green within two seconds without a reload; force a refusal and it
+   turns red. The counter's seconds come from `actions.json`. The Guardrail toggle renders the same
+   actions with nothing held.
 
 5. Tests.
 
        node --test src/hold.test.mjs
+       node --test src/bridge.test.mjs
        python3 -m pytest services/extractor/tests
 
-   The Node suite is 27 tests against a fake Telegram, no network, no real `.env`. The Python suite
+   The hold suite is 27 tests against a fake Telegram: no network, no real `.env`, and one fixture that a
+   re-serialising verifier would reject, so the rule is tested and not merely stated. The Python suite
    needs the packages in `services/extractor/requirements.txt`; it covers normalization, validation,
-   derivation and the model-call contract.
+   derivation, the model-call contract and the HTTP boundary.
 
 ## One limitation, stated plainly
 
@@ -143,7 +161,8 @@ to the exact bytes a human saw.
 ## Credits
 
 - Manu Martín: repository, the Node bridge, the Telegram hold, the hash verification and deployment.
-- Aarón Nuñez Tejado: the page under `web/`, its transcript and action fixtures, and the video.
-- Tomer Messinger Carmeli: the extraction engine under `services/extractor/`, a separate Python service.
+- Aarón Nuñez Tejado: the page under `web/`, the demo transcript, and the video.
+- Tomer Messinger Carmeli: the extraction engine under `services/extractor/`, a separate Python service,
+  and its canonicalization, which is the only source of every seal in this repository.
 
 Built on 12 September 2026 at the AI Tinkerers "Agents, Everywhere" hackathon in Valencia.
