@@ -178,8 +178,14 @@ def test_call1_prompt_states_the_individuation_and_qualifier_rules(transcript):
     )
     # The absorbing rules must not swallow work the speaker actually undertakes.
     assert "Do not use this to merge genuinely independent follow-up work." in prompt
+    # Scoped to guards and prerequisites: deadlines, confirmations and supplied
+    # values are excluded from evidence outright, not weighed against this test.
     assert (
-        "Where the speaker also undertakes to produce the thing the qualifier waits "
+        "For a guard or prerequisite, set it aside when satisfying it is someone "
+        "else's act, an event, or a state of the world." in prompt
+    )
+    assert (
+        "Where the speaker also undertakes to produce the thing the guard waits "
         "on, that production is its own commitment and is extracted separately." in prompt
     )
     assert (
@@ -365,7 +371,10 @@ def test_call2_prompt_governs_grounded_synthesis_and_omission(transcript, candid
         "How firmly a value is supported decides its support level. It never decides "
         "whether the value is included." in prompt
     )
-    assert "Never emit a placeholder, empty, hedged, or guessed value." in prompt
+    # "hedged" is deliberately absent here: a single grounded approximate value is
+    # emitted at weak, so banning hedged values outright would contradict that rule.
+    assert "Never emit a placeholder, empty, invented, or conflict-combining value." in prompt
+    assert "hedged, or guessed value" not in prompt
 
 
 def test_call2_prompt_separates_commitment_evidence_from_parameter_evidence(

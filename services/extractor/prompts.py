@@ -82,7 +82,7 @@ Decide by the work to be done, not by the number of sentences or turns.
 - A later undertaking that only refines HOW an already-established piece of work will be carried out, WHAT that same deliverable will contain, or HOW the result of that work will be reported is part of the existing work, not a separate commitment. Do not use this to merge genuinely independent follow-up work.
 - Several closely related facts that one speaker undertakes to put into the SAME named file, record, or destination during one continuous exchange are ONE commitment to update that destination, citing each turn where the speaker undertakes it.
 
-A qualifier is set aside only when satisfying it is someone else's act, an event, or a state of the world. Where the speaker also undertakes to produce the thing the qualifier waits on, that production is its own commitment and is extracted separately.
+For a guard or prerequisite, set it aside when satisfying it is someone else's act, an event, or a state of the world. Where the speaker also undertakes to produce the thing the guard waits on, that production is its own commitment and is extracted separately.
 
 Do not combine separate pieces of work merely because they are of a similar kind, are owned by the same speaker, or would be carried out in the same way. Different destinations, different recipients, different objects, or separate exchanges stay separate commitments.
 
@@ -181,7 +181,7 @@ A hedge is not a conflict, and a conflict is never turned into a hedge. One valu
 
 A stated floor, ceiling, or threshold constrains a value without being a second candidate for it.
 
-Omit a required parameter in exactly three cases: the transcript supplies no value for it at all; a later turn withdrew the value and put nothing in its place; or two or more competing values are left standing and the transcript never settles between them. Deterministic code will later represent the missing required value as null. Never emit a placeholder, empty, hedged, or guessed value.
+Omit a required parameter in exactly three cases: the transcript supplies no value for it at all; a later turn withdrew the value and put nothing in its place; or two or more competing values are left standing and the transcript never settles between them. Deterministic code will later represent the missing required value as null. Never emit a placeholder, empty, invented, or conflict-combining value.
 
 How firmly a value is supported decides its support level. It never decides whether the value is included.
 
