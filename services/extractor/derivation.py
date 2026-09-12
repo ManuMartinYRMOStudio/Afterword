@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
-from .action_specs import ACTION_SPECS, SUPPORT_ORDER, SUPPORT_TO_CONFIDENCE
+from .action_specs import (
+    ACTION_SPECS,
+    REVERSIBILITY,
+    SUPPORT_ORDER,
+    SUPPORT_TO_CONFIDENCE,
+)
 from .models import (
     ActionType,
     Call2ActionDraft,
     CommitmentCandidate,
+    HoldReason,
     ParameterEvidence,
     ResolvedAction,
     SupportLevel,
@@ -64,7 +70,48 @@ def _build_payload_and_support(
 def build_resolved_actions(
     candidates: list[CommitmentCandidate], drafts: list[Call2ActionDraft]
 ) -> tuple[list[ResolvedAction], list[ValidationWarning]]:
-    raise NotImplementedError("Resolved-action derivation belongs to a later wave")
+    """Join validated stages in candidate order and derive final action policy."""
+
+    drafts_by_candidate_id = {draft.candidate_id: draft for draft in drafts}
+    actions: list[ResolvedAction] = []
+
+    for candidate in candidates:
+        draft = drafts_by_candidate_id.get(candidate.candidate_id)
+        if draft is None:
+            continue
+
+        payload, parameter_evidence, support, confidence = (
+            _build_payload_and_support(draft, candidate.commitment_support)
+        )
+        spec = ACTION_SPECS[draft.type]
+
+        if draft.type is ActionType.UNKNOWN:
+            hold_reason = HoldReason.UNKNOWN_TYPE
+        elif REVERSIBILITY[draft.type] is False:
+            hold_reason = HoldReason.IRREVERSIBLE_TYPE
+        elif any(payload[field] is None for field in spec.required):
+            hold_reason = HoldReason.MISSING_REQUIRED_PARAMETER
+        else:
+            hold_reason = None
+
+        actions.append(
+            ResolvedAction(
+                id=f"a{len(actions) + 1}",
+                type=draft.type,
+                title=draft.title,
+                summary=draft.summary,
+                payload=payload,
+                action_evidence=candidate.commitment_evidence,
+                action_support=candidate.commitment_support,
+                parameter_evidence=parameter_evidence,
+                support=support,
+                confidence=confidence,
+                auto_execute=hold_reason is None,
+                hold_reason=hold_reason,
+            )
+        )
+
+    return actions, []
 
 
 def canonicalize_execution(
