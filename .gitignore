@@ -1,6 +1,13 @@
 node_modules
+node_modules/
 .env*
 !.env.example
 __pycache__
 .DS_Store
 .netlify
+.idea/
+*.mov
+*.mp4
+*.webm
+*.mkv
+*.m4v

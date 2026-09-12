@@ -1,0 +1,18 @@
+{
+  "turns": [
+    { "id": "L01", "speaker": "CLARA", "text": "Thanks for making the time, David. The Ruzafa flat — you still want it on the market this month?" },
+    { "id": "L02", "speaker": "DAVID", "text": "That's the idea. I fly back to Bristol on the 2nd and I'd rather have it live before I go." },
+    { "id": "L03", "speaker": "CLARA", "text": "Then I'll send you the listing agreement today, so you can read it properly. Three percent plus VAT, ninety days exclusive, as we said." },
+    { "id": "L04", "speaker": "DAVID", "text": "Same email as always?" },
+    { "id": "L05", "speaker": "CLARA", "text": "david.whitmore@example.com, yes?" },
+    { "id": "L06", "speaker": "DAVID", "text": "That's the one. And the asking price?" },
+    { "id": "L07", "speaker": "CLARA", "text": "Let's say around 329,000. But I want to check the last two sales on that street before I put a number in writing." },
+    { "id": "L08", "speaker": "DAVID", "text": "Fine. But nothing goes public below 320." },
+    { "id": "L09", "speaker": "CLARA", "text": "Nothing goes on the portal until you've seen the valuation. You have my word." },
+    { "id": "L10", "speaker": "DAVID", "text": "One more thing — the storage room downstairs isn't in the sale. My son keeps his bike there." },
+    { "id": "L11", "speaker": "CLARA", "text": "I'll put that on the file. Furniture?" },
+    { "id": "L12", "speaker": "DAVID", "text": "Furniture stays. Sell it furnished." },
+    { "id": "L13", "speaker": "CLARA", "text": "Right. Let's talk Thursday at noon and I'll have the comparables by then." },
+    { "id": "L14", "speaker": "DAVID", "text": "Thursday at twelve. Works for me." }
+  ]
+}
