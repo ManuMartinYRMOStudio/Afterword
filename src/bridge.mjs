@@ -32,11 +32,48 @@ export function buildExtractRequest(text, principal) {
 }
 
 
+class SnapshotValidationError extends Error {}
+
 function validateSnapshot(value) {
-  if (!value || !Object.hasOwn(value, 'transcript') || !Array.isArray(value.actions) ||
-      value.actions.some(action => !action || typeof action.auto_execute !== 'boolean')) {
-    throw new Error('Invalid snapshot: expected transcript and actions with boolean auto_execute');
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new SnapshotValidationError('top level must be an object');
   }
+  const problems = [];
+  if (!Object.hasOwn(value, 'transcript')) problems.push('missing top-level field "transcript"');
+  else if (!Array.isArray(value.transcript)) problems.push('top-level field "transcript" must be an array');
+  if (!Object.hasOwn(value, 'actions')) problems.push('missing top-level field "actions"');
+  else if (!Array.isArray(value.actions)) problems.push('top-level field "actions" must be an array');
+  else {
+    value.actions.forEach((action, index) => {
+      if (!action || typeof action !== 'object' || Array.isArray(action)) {
+        problems.push('action at index ' + index + ' must be an object');
+        return;
+      }
+      const label = typeof action.id === 'string' && action.id.trim()
+        ? 'action ' + JSON.stringify(action.id) : 'action at index ' + index;
+      for (const field of ['id', 'type', 'title', 'payload', 'auto_execute', 'canonical', 'hash']) {
+        if (!Object.hasOwn(action, field)) problems.push(label + ': missing field "' + field + '"');
+      }
+      for (const field of ['id', 'type', 'title', 'canonical']) {
+        if (Object.hasOwn(action, field) &&
+            (typeof action[field] !== 'string' || !action[field].trim())) {
+          problems.push(label + ': field "' + field + '" must be a non-empty string');
+        }
+      }
+      if (Object.hasOwn(action, 'payload') &&
+          (!action.payload || typeof action.payload !== 'object' || Array.isArray(action.payload))) {
+        problems.push(label + ': field "payload" must be an object');
+      }
+      if (Object.hasOwn(action, 'auto_execute') && typeof action.auto_execute !== 'boolean') {
+        problems.push(label + ': field "auto_execute" must be a boolean');
+      }
+      if (Object.hasOwn(action, 'hash') &&
+          (typeof action.hash !== 'string' || !/^[0-9a-fA-F]{64}$/.test(action.hash))) {
+        problems.push(label + ': field "hash" must contain exactly 64 hexadecimal characters');
+      }
+    });
+  }
+  if (problems.length) throw new SnapshotValidationError(problems.join('; '));
   return { transcript: value.transcript, actions: value.actions };
 }
 
@@ -138,6 +175,7 @@ async function extract(url, text, principal, signal) {
       if (signal.aborted) return null;
       // Do not print response bodies, configuration values, or Telegram credentials.
       const reason = error.name === 'TimeoutError' ? 'request timed out'
+        : error instanceof SnapshotValidationError ? error.message
         : error.message.startsWith('HTTP ') ? error.message : 'response unavailable or invalid';
       console.error('[engine] Attempt ' + attempt + '/6 failed: ' + reason);
       if (attempt < 6) await delay(2_000, undefined, { signal }).catch(() => {});
@@ -308,7 +346,7 @@ async function main() {
 }
 
 async function readEngineResult(env, signal) {
-  const transcriptPath = resolve(ROOT, env.TRANSCRIPT_PATH || 'web/sample.txt');
+  const transcriptPath = resolve(ROOT, env.TRANSCRIPT_PATH || 'web/transcript.json');
   let text;
   try {
     text = await readFile(transcriptPath, 'utf8');
@@ -364,9 +402,12 @@ async function processTranscript(env, sendProposal, signal) {
       const saved = await readFile(join(WEB, 'actions.json'), 'utf8');
       if (signal.aborted) return;
       result = validateSnapshot(JSON.parse(saved));
-    } catch {
+    } catch (error) {
       if (signal.aborted) return;
-      console.error('No engine result or usable web/actions.json is available. The web server is still running; write web/actions.json manually.');
+      const reason = error instanceof SnapshotValidationError ? error.message
+        : error instanceof SyntaxError ? 'invalid JSON'
+        : error.code === 'ENOENT' ? 'file is missing' : 'file could not be read';
+      console.error('Rejected web/actions.json: ' + reason + '. The web server is still running.');
       return;
     }
     console.log('Running from web/actions.json, not from the engine.');

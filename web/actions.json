@@ -1,7 +1,251 @@
-{"seconds":14,"actions":[
-{"id":"r1","type":"calendar_event","title":"Follow-up call with David","summary":"Thursday 12:00","payload":{"title":"Follow-up call with David","datetime":"Thursday 12:00"},"action_evidence":["L13","L14"],"action_support":"explicit","parameter_evidence":{"title":{"turns":["L13"],"support":"contextual"},"datetime":{"turns":["L13","L14"],"support":"explicit"}},"support":"explicit","confidence":0.95,"auto_execute":true,"hold_reason":null},
-{"id":"r2","type":"task","title":"Check the last two sales on that street","summary":"Before any price goes in writing","payload":{"title":"Check the last two sales on that street","due":"Thursday"},"action_evidence":["L07"],"action_support":"explicit","parameter_evidence":{"title":{"turns":["L07"],"support":"explicit"},"due":{"turns":["L13"],"support":"contextual"}},"support":"explicit","confidence":0.92,"auto_execute":true,"hold_reason":null},
-{"id":"r3","type":"note","title":"Storage room excluded, furniture included","summary":"Added to the property file","payload":{"body":"Storage room downstairs is not part of the sale. Furniture stays; sell it furnished."},"action_evidence":["L10","L12"],"action_support":"explicit","parameter_evidence":{"body":{"turns":["L10","L12"],"support":"explicit"}},"support":"explicit","confidence":0.9,"auto_execute":true,"hold_reason":null},
-{"id":"r4","type":"email","title":"Send the listing agreement to David","summary":"Three percent plus VAT, ninety days exclusive","payload":{"to":"david.whitmore@example.com","subject":"Listing agreement — Ruzafa flat","body":"Three percent plus VAT, ninety days exclusive, as agreed."},"action_evidence":["L03"],"action_support":"explicit","parameter_evidence":{"to":{"turns":["L05"],"support":"explicit"},"subject":{"turns":["L03"],"support":"contextual"},"body":{"turns":["L03"],"support":"explicit"}},"support":"explicit","confidence":0.9,"auto_execute":false,"hold_reason":"irreversible_type"},
-{"id":"r5","type":"listing_publish","title":"Publish the Ruzafa listing at 329,000","summary":"Live on the portal this month","payload":{"property_ref":"Ruzafa flat","price":"329,000"},"action_evidence":["L02"],"action_support":"explicit","parameter_evidence":{"property_ref":{"turns":["L01"],"support":"explicit"},"price":{"turns":["L07"],"support":"weak"}},"support":"weak","confidence":0.84,"auto_execute":false,"hold_reason":"irreversible_type"}
-]}
+{
+  "seconds": 14,
+  "actions": [
+    {
+      "id": "r1",
+      "type": "calendar_event",
+      "title": "Follow-up call with David",
+      "summary": "Thursday 12:00",
+      "payload": {
+        "title": "Follow-up call with David",
+        "datetime": "Thursday 12:00"
+      },
+      "action_evidence": [
+        "L13",
+        "L14"
+      ],
+      "action_support": "explicit",
+      "parameter_evidence": {
+        "title": {
+          "turns": [
+            "L13"
+          ],
+          "support": "contextual"
+        },
+        "datetime": {
+          "turns": [
+            "L13",
+            "L14"
+          ],
+          "support": "explicit"
+        }
+      },
+      "support": "explicit",
+      "confidence": 0.95,
+      "auto_execute": true,
+      "hold_reason": null,
+      "canonical": "{\"payload\":{\"datetime\":\"Thursday 12:00\",\"title\":\"Follow-up call with David\"},\"type\":\"calendar_event\"}",
+      "hash": "8670247ab74b021abd0679d7fd752e570fe53541901bef9ee5ea584f5ac05f49"
+    },
+    {
+      "id": "r2",
+      "type": "task",
+      "title": "Check the last two sales on that street",
+      "summary": "Before any price goes in writing",
+      "payload": {
+        "title": "Check the last two sales on that street",
+        "due": "Thursday"
+      },
+      "action_evidence": [
+        "L07"
+      ],
+      "action_support": "explicit",
+      "parameter_evidence": {
+        "title": {
+          "turns": [
+            "L07"
+          ],
+          "support": "explicit"
+        },
+        "due": {
+          "turns": [
+            "L13"
+          ],
+          "support": "contextual"
+        }
+      },
+      "support": "explicit",
+      "confidence": 0.92,
+      "auto_execute": true,
+      "hold_reason": null,
+      "canonical": "{\"payload\":{\"due\":\"Thursday\",\"title\":\"Check the last two sales on that street\"},\"type\":\"task\"}",
+      "hash": "b9c3d1cb3514be46c410f94ffb2ed2edb06303e40dcd33342c6d85e40fb4f1e9"
+    },
+    {
+      "id": "r3",
+      "type": "note",
+      "title": "Storage room excluded, furniture included",
+      "summary": "Added to the property file",
+      "payload": {
+        "body": "Storage room downstairs is not part of the sale. Furniture stays; sell it furnished."
+      },
+      "action_evidence": [
+        "L10",
+        "L12"
+      ],
+      "action_support": "explicit",
+      "parameter_evidence": {
+        "body": {
+          "turns": [
+            "L10",
+            "L12"
+          ],
+          "support": "explicit"
+        }
+      },
+      "support": "explicit",
+      "confidence": 0.9,
+      "auto_execute": true,
+      "hold_reason": null,
+      "canonical": "{\"payload\":{\"body\":\"Storage room downstairs is not part of the sale. Furniture stays; sell it furnished.\"},\"type\":\"note\"}",
+      "hash": "18980ea5bd06080ce3a7d4fc0728bfd50172191ca4f3770222e60c347369618d"
+    },
+    {
+      "id": "r4",
+      "type": "email",
+      "title": "Send the listing agreement to David",
+      "summary": "Three percent plus VAT, ninety days exclusive",
+      "payload": {
+        "to": "david.whitmore@example.com",
+        "subject": "Listing agreement — Ruzafa flat",
+        "body": "Three percent plus VAT, ninety days exclusive, as agreed."
+      },
+      "action_evidence": [
+        "L03"
+      ],
+      "action_support": "explicit",
+      "parameter_evidence": {
+        "to": {
+          "turns": [
+            "L05"
+          ],
+          "support": "explicit"
+        },
+        "subject": {
+          "turns": [
+            "L03"
+          ],
+          "support": "contextual"
+        },
+        "body": {
+          "turns": [
+            "L03"
+          ],
+          "support": "explicit"
+        }
+      },
+      "support": "explicit",
+      "confidence": 0.9,
+      "auto_execute": false,
+      "hold_reason": "irreversible_type",
+      "canonical": "{\"payload\":{\"body\":\"Three percent plus VAT, ninety days exclusive, as agreed.\",\"subject\":\"Listing agreement — Ruzafa flat\",\"to\":\"david.whitmore@example.com\"},\"type\":\"email\"}",
+      "hash": "0042b5bd9545ff02a63a771406c2e89b46a6be4d6bd46fa0c97a5c1911a1c094"
+    },
+    {
+      "id": "r5",
+      "type": "listing_publish",
+      "title": "Publish the Ruzafa listing at 329,000",
+      "summary": "Live on the portal this month",
+      "payload": {
+        "property_ref": "Ruzafa flat",
+        "price": "329,000"
+      },
+      "action_evidence": [
+        "L02"
+      ],
+      "action_support": "explicit",
+      "parameter_evidence": {
+        "property_ref": {
+          "turns": [
+            "L01"
+          ],
+          "support": "explicit"
+        },
+        "price": {
+          "turns": [
+            "L07"
+          ],
+          "support": "weak"
+        }
+      },
+      "support": "weak",
+      "confidence": 0.84,
+      "auto_execute": false,
+      "hold_reason": "irreversible_type",
+      "canonical": "{\"payload\":{\"price\":\"329,000\",\"property_ref\":\"Ruzafa flat\"},\"type\":\"listing_publish\"}",
+      "hash": "98be75abd1b8f9e455c3a1a2a4c0986615196621f368bd4cbe70307fab704735"
+    }
+  ],
+  "transcript": [
+    {
+      "id": "L01",
+      "speaker": "CLARA",
+      "text": "Thanks for making the time, David. The Ruzafa flat — you still want it on the market this month?"
+    },
+    {
+      "id": "L02",
+      "speaker": "DAVID",
+      "text": "That's the idea. I fly back to Bristol on the 2nd and I'd rather have it live before I go."
+    },
+    {
+      "id": "L03",
+      "speaker": "CLARA",
+      "text": "Then I'll send you the listing agreement today, so you can read it properly. Three percent plus VAT, ninety days exclusive, as we said."
+    },
+    {
+      "id": "L04",
+      "speaker": "DAVID",
+      "text": "Same email as always?"
+    },
+    {
+      "id": "L05",
+      "speaker": "CLARA",
+      "text": "david.whitmore@example.com, yes?"
+    },
+    {
+      "id": "L06",
+      "speaker": "DAVID",
+      "text": "That's the one. And the asking price?"
+    },
+    {
+      "id": "L07",
+      "speaker": "CLARA",
+      "text": "Let's say around 329,000. But I want to check the last two sales on that street before I put a number in writing."
+    },
+    {
+      "id": "L08",
+      "speaker": "DAVID",
+      "text": "Fine. But nothing goes public below 320."
+    },
+    {
+      "id": "L09",
+      "speaker": "CLARA",
+      "text": "Nothing goes on the portal until you've seen the valuation. You have my word."
+    },
+    {
+      "id": "L10",
+      "speaker": "DAVID",
+      "text": "One more thing — the storage room downstairs isn't in the sale. My son keeps his bike there."
+    },
+    {
+      "id": "L11",
+      "speaker": "CLARA",
+      "text": "I'll put that on the file. Furniture?"
+    },
+    {
+      "id": "L12",
+      "speaker": "DAVID",
+      "text": "Furniture stays. Sell it furnished."
+    },
+    {
+      "id": "L13",
+      "speaker": "CLARA",
+      "text": "Right. Let's talk Thursday at noon and I'll have the comparables by then."
+    },
+    {
+      "id": "L14",
+      "speaker": "DAVID",
+      "text": "Thursday at twelve. Works for me."
+    }
+  ]
+}
