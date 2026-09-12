@@ -60,6 +60,58 @@
 
   // ---------- actions ----------
 
+  var statusInterval = null;
+
+  function stopStatusPolling() {
+    if (statusInterval !== null) {
+      window.clearInterval(statusInterval);
+      statusInterval = null;
+    }
+  }
+
+  function startStatusPolling() {
+    stopStatusPolling();
+    if (!guardrailOn || !workEl.querySelector('li[data-action-id].card--held')) return;
+
+    var interval = window.setInterval(function () {
+      var cards = workEl.querySelectorAll('li[data-action-id].card--held');
+      if (!guardrailOn || !cards.length) {
+        stopStatusPolling();
+        return;
+      }
+
+      Array.prototype.forEach.call(cards, function (card) {
+        var id = card.getAttribute('data-action-id');
+        fetch('/api/status/' + encodeURIComponent(id))
+          .then(function (response) {
+            if (!response.ok) return null;
+            return response.json();
+          })
+          .then(function (status) {
+            if (statusInterval !== interval || !guardrailOn ||
+                !workEl.contains(card) || !card.classList.contains('card--held')) return;
+
+            if (status === 'approved') {
+              card.classList.remove('card--held');
+              card.classList.add('card--done');
+              card.querySelector('.card__icon').textContent = '\u2713';
+              card.querySelector('.card__badge').textContent = 'DONE';
+            } else if (status === 'refused') {
+              card.classList.remove('card--held');
+              card.classList.add('card--breach');
+              card.querySelector('.card__badge').textContent = 'REFUSED';
+            }
+
+            if (!workEl.querySelector('li[data-action-id].card--held')) stopStatusPolling();
+          })
+          .catch(function () {
+            // Leave the card held and retry on the next tick.
+          });
+      });
+    }, 2000);
+    statusInterval = interval;
+  }
+
   var HOLD_REASON_TEXT = {
     irreversible_type: 'This cannot be undone',
     unknown_type: 'Unrecognised action — held by default',
@@ -233,6 +285,7 @@
     window.setTimeout(function () {
       workEl.appendChild(buildCounter(actions, seconds, guardrail));
       runButton.disabled = false;
+      startStatusPolling();
     }, actions.length * 400);
   }
 
@@ -244,6 +297,7 @@
   }
 
   guardrailEl.addEventListener('click', function () {
+    stopStatusPolling();
     guardrailOn = !guardrailOn;
     renderGuardrail();
     clearHighlight();
@@ -253,6 +307,7 @@
   renderGuardrail();
 
   runButton.addEventListener('click', function () {
+    stopStatusPolling();
     runButton.disabled = true;
     clearHighlight();
     workEl.innerHTML = '';
