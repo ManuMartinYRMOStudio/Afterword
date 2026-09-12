@@ -247,7 +247,7 @@ function clip(text, max) {
 
 /** Una sola línea: ningún salto (ASCII o Unicode) puede fingir secciones de la ficha. */
 function oneLine(value) {
-  return String(value).replace(/\r\n?|[\n\v\f  ]/g, ' ⏎ ');
+  return String(value).replace(/\r\n?|[\n\v\f\u0085\u2028\u2029]/g, ' ⏎ ');
 }
 
 function describe(proposal) {
@@ -308,7 +308,7 @@ function assemble(head, middle, tail) {
     const shown = cutAt(middleText, kept);
     middleText = `${shown}…${note(middleText.length - shown.length)}`;
   }
-  return `${headText}\n${middleText}\n${tailText}`;
+  return middleText ? `${headText}\n${middleText}\n${tailText}` : `${headText}\n${tailText}`;
 }
 
 function cardText(proposal) {
