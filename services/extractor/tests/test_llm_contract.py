@@ -414,6 +414,26 @@ def test_resolve_candidates_sends_only_the_supplied_candidates(
     assert "C03" not in request["input"]
 
 
+def test_build_client_disables_sdk_retries_and_bounds_the_timeout(monkeypatch):
+    """This wrapper owns retry behaviour; the SDK must not add a second layer."""
+
+    recorded = {}
+
+    def fake_openai(**kwargs):
+        recorded.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(openai, "OpenAI", fake_openai)
+
+    llm._build_client("test-key")
+
+    assert recorded == {
+        "api_key": "test-key",
+        "max_retries": 0,
+        "timeout": 45.0,
+    }
+
+
 def test_the_model_identifier_is_never_hard_coded_in_this_module():
     from services.extractor.config import DEFAULT_OPENAI_MODEL
 

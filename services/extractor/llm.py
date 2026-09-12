@@ -20,6 +20,11 @@ ResponseT = TypeVar("ResponseT", Call1Response, Call2Response)
 MAX_TRANSPORT_ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = 0.5
 
+# The SDK retries twice by default and waits a very long time before giving up.
+# Both are disabled so the bounded policy above is the only one in effect.
+SDK_MAX_RETRIES = 0
+REQUEST_TIMEOUT_SECONDS = 45.0
+
 # Transport/provider faults only. Semantic dissatisfaction is never a retry reason.
 _RETRYABLE = (
     openai.APIConnectionError,
@@ -51,7 +56,13 @@ class LLMSchemaError(LLMError):
 def _build_client(api_key: str) -> openai.OpenAI:
     """Create the OpenAI client. Patched in unit tests; never called at import time."""
 
-    return openai.OpenAI(api_key=api_key)
+    # This wrapper is the sole owner of retry behaviour: SDK-level retries would
+    # stack underneath MAX_TRANSPORT_ATTEMPTS and turn three attempts into nine.
+    return openai.OpenAI(
+        api_key=api_key,
+        max_retries=SDK_MAX_RETRIES,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+    )
 
 
 def _unsupported_parameter(error: openai.BadRequestError, name: str) -> bool:
