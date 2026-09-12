@@ -1,0 +1,232 @@
+(function () {
+  'use strict';
+
+  var transcriptEl = document.getElementById('transcript');
+  var runButton = document.getElementById('run-button');
+  var workEl = document.getElementById('work');
+
+  function renderTranscript(turns) {
+    transcriptEl.innerHTML = '';
+
+    turns.forEach(function (turn) {
+      var p = document.createElement('p');
+      p.className = 'turn';
+      p.id = 'turn-' + turn.id;
+      p.setAttribute('data-turn-id', turn.id);
+
+      var id = document.createElement('span');
+      id.className = 'turn__id';
+      id.textContent = turn.id;
+
+      var body = document.createElement('span');
+      body.className = 'turn__body';
+
+      var speaker = document.createElement('span');
+      speaker.className = 'turn__speaker';
+      speaker.textContent = turn.speaker + ':';
+
+      body.appendChild(speaker);
+      body.appendChild(document.createTextNode(turn.text));
+
+      p.appendChild(id);
+      p.appendChild(body);
+      transcriptEl.appendChild(p);
+    });
+  }
+
+  function showTranscriptError(message) {
+    transcriptEl.innerHTML = '';
+    var p = document.createElement('p');
+    p.className = 'transcript__status';
+    p.textContent = message;
+    transcriptEl.appendChild(p);
+  }
+
+  fetch('transcript.json')
+    .then(function (response) {
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      return response.json();
+    })
+    .then(function (data) {
+      renderTranscript(data.turns || []);
+    })
+    .catch(function () {
+      showTranscriptError('Could not load transcript.json. Serve this folder over http (for example: python3 -m http.server).');
+    });
+
+  // ---------- actions ----------
+
+  var HOLD_REASON_TEXT = {
+    irreversible_type: 'This cannot be undone',
+    unknown_type: 'Unrecognised action — held by default',
+    missing_required_parameter: 'A required value is missing'
+  };
+
+  var HOLD_REASON_FALLBACK = 'Held for your review';
+
+  function holdReasonText(code) {
+    return HOLD_REASON_TEXT[code] || HOLD_REASON_FALLBACK;
+  }
+
+  function weakParameters(parameterEvidence) {
+    var weak = [];
+    if (!parameterEvidence) return weak;
+    Object.keys(parameterEvidence).forEach(function (name) {
+      var entry = parameterEvidence[name];
+      if (entry && entry.support === 'weak') weak.push(name);
+    });
+    return weak;
+  }
+
+  function buildCard(action) {
+    var done = action.auto_execute === true;
+
+    var li = document.createElement('li');
+    li.className = 'card ' + (done ? 'card--done' : 'card--held');
+    li.setAttribute('data-action-id', action.id);
+
+    var head = document.createElement('div');
+    head.className = 'card__head';
+
+    var icon = document.createElement('span');
+    icon.className = 'card__icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = done ? '\u2713' : '\u23F8';
+
+    var text = document.createElement('div');
+    text.className = 'card__text';
+
+    var title = document.createElement('p');
+    title.className = 'card__title';
+    title.textContent = action.title || '';
+
+    var summary = document.createElement('p');
+    summary.className = 'card__summary';
+    summary.textContent = action.summary || '';
+
+    text.appendChild(title);
+    text.appendChild(summary);
+
+    var badge = document.createElement('span');
+    badge.className = 'card__badge';
+    badge.textContent = done ? 'DONE' : 'WAITING FOR YOU';
+
+    head.appendChild(icon);
+    head.appendChild(text);
+    head.appendChild(badge);
+    li.appendChild(head);
+
+    weakParameters(action.parameter_evidence).forEach(function (name) {
+      var weak = document.createElement('p');
+      weak.className = 'card__weak';
+      weak.textContent = name + ' \u2014 weakly supported';
+      li.appendChild(weak);
+    });
+
+    if (!done) {
+      var hold = document.createElement('p');
+      hold.className = 'card__hold';
+      hold.textContent = holdReasonText(action.hold_reason);
+      li.appendChild(hold);
+    }
+
+    li.addEventListener('mouseenter', function () {
+      highlightTurns(action.action_evidence);
+    });
+    li.addEventListener('mouseleave', clearHighlight);
+
+    return li;
+  }
+
+  function highlightTurns(turnIds) {
+    clearHighlight();
+    if (!turnIds) return;
+    turnIds.forEach(function (id) {
+      var el = document.getElementById('turn-' + id);
+      if (el) el.classList.add('turn--highlight');
+    });
+  }
+
+  function clearHighlight() {
+    var highlighted = transcriptEl.querySelectorAll('.turn--highlight');
+    Array.prototype.forEach.call(highlighted, function (el) {
+      el.classList.remove('turn--highlight');
+    });
+  }
+
+  function buildCounter(actions, seconds) {
+    var total = actions.length;
+    var done = actions.filter(function (a) { return a.auto_execute === true; }).length;
+    var held = total - done;
+
+    var p = document.createElement('p');
+    p.className = 'counter';
+    p.appendChild(document.createTextNode(
+      total + (total === 1 ? ' loose end. ' : ' loose ends. ') +
+      done + ' done. ' +
+      held + (held === 1 ? ' waiting on a human. ' : ' waiting on a human. ')
+    ));
+
+    var secs = document.createElement('span');
+    secs.className = 'counter__seconds';
+    secs.textContent = seconds + (seconds === 1 ? ' second.' : ' seconds.');
+    p.appendChild(secs);
+
+    return p;
+  }
+
+  function normalise(data) {
+    if (Array.isArray(data)) {
+      return { actions: data, seconds: 14 };
+    }
+    if (data && typeof data === 'object') {
+      return {
+        actions: Array.isArray(data.actions) ? data.actions : [],
+        seconds: typeof data.seconds === 'number' ? data.seconds : 14
+      };
+    }
+    return { actions: [], seconds: 14 };
+  }
+
+  function revealCards(actions, seconds) {
+    workEl.innerHTML = '';
+
+    var list = document.createElement('ul');
+    list.className = 'work__list';
+    workEl.appendChild(list);
+
+    actions.forEach(function (action, index) {
+      window.setTimeout(function () {
+        list.appendChild(buildCard(action));
+      }, index * 400);
+    });
+
+    window.setTimeout(function () {
+      workEl.appendChild(buildCounter(actions, seconds));
+      runButton.disabled = false;
+    }, actions.length * 400);
+  }
+
+  runButton.addEventListener('click', function () {
+    runButton.disabled = true;
+    clearHighlight();
+    workEl.innerHTML = '';
+
+    fetch('actions.json')
+      .then(function (response) {
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        return response.json();
+      })
+      .then(function (data) {
+        var payload = normalise(data);
+        revealCards(payload.actions, payload.seconds);
+      })
+      .catch(function () {
+        runButton.disabled = false;
+        var p = document.createElement('p');
+        p.className = 'transcript__status';
+        p.textContent = 'Could not load actions.json.';
+        workEl.appendChild(p);
+      });
+  });
+})();
