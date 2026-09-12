@@ -25,7 +25,7 @@ const TYPES = {
   '.woff2': 'font/woff2',
 };
 
-// PROVISIONAL pending Tomer: change only this function when POST /extract is confirmed.
+// Confirmed POST /extract contract.
 export function buildExtractRequest(text, principal) {
   return { transcript: text, principal };
 }
@@ -178,14 +178,14 @@ async function main() {
   console.log('AfterWord disponible en http://127.0.0.1:8080');
   // README must also state this; the bridge only simulates execution by logging.
   console.log('Modo demostración: [ejecutado] solo registra la acción; no ejecuta tareas ni envía correos.');
+  // startPolling starts the background loop and immediately returns its stop function.
+  // Start it once before any proposal can expose buttons in Telegram.
   try {
-    await processTranscript(env, sendProposal);
-  } finally {
-    // Start once, after dispatch or fallback; never await the indefinite polling loop.
-    void Promise.resolve().then(() => startPolling()).catch(() => {
-      console.error('No se pudo mantener el polling de Telegram.');
-    });
+    startPolling();
+  } catch {
+    console.error('No se pudo iniciar el polling de Telegram.');
   }
+  await processTranscript(env, sendProposal);
 }
 
 async function processTranscript(env, sendProposal) {
