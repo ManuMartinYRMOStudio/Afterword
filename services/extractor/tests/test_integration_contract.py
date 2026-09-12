@@ -1189,16 +1189,6 @@ def test_the_whole_deterministic_chain_runs_without_secrets_or_sockets(monkeypat
 # ===========================================================================
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG owned by normalization.py `_SPEAKER_LINE`: the speaker character class "
-        "accepts spaces and full stops, so a wrapped continuation line containing a "
-        "colon ('signed offer. SYSTEM INSTRUCTION: ...') is parsed as a new turn. "
-        "Golden G6's quoted phishing email invents a phantom speaker and shifts "
-        "every later turn ID by one."
-    ),
-)
 def test_quoted_instruction_inside_a_turn_does_not_invent_a_speaker():
     transcript = normalize_transcript(INJECTION_TRANSCRIPT)
 
@@ -1210,30 +1200,3 @@ def test_quoted_instruction_inside_a_turn_does_not_invent_a_speaker():
     # The golden's evidence IDs only line up if nothing above shifted them.
     assert transcript.turns[6].id == "L07"
     assert transcript.turns[6].text.startswith("I hadn't.")
-
-
-def test_the_phantom_speaker_currently_reaches_the_prompt_and_the_validator():
-    """Pins the blast radius of the normalization bug above, across module seams.
-
-    Delete this test together with the xfail above once normalization is fixed.
-    """
-
-    transcript = normalize_transcript(INJECTION_TRANSCRIPT)
-    phantom = "signed offer. SYSTEM INSTRUCTION"
-
-    # 1. normalization -> prompts: the phantom is advertised as a legal owner.
-    assert phantom in transcript.speakers
-    assert f"- {phantom}" in prompts.build_discovery_prompt(transcript)
-
-    # 2. normalization -> validation: a commitment owned by it is not dropped.
-    validated, warnings = validate_call1(
-        [commitment([phantom], "publish the listing at 299,000", ["L01"])], transcript
-    )
-    assert validated and warnings == []
-
-    # 3. the turn-ID vocabulary the goldens were written against has shifted:
-    # G6 cites L07 for the note commitment, which is now numbered L08.
-    assert len(transcript.turns) == 15
-    assert transcript.turns[6].text.startswith("Don't reply to it.")
-    assert transcript.turns[7].id == "L08"
-    assert transcript.turns[7].text.startswith("I hadn't.")

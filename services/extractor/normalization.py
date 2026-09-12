@@ -7,15 +7,20 @@ import re
 from .models import NormalizedTranscript, TranscriptTurn
 
 
-_SPEAKER_LINE = re.compile(
-    r"^(?:L\d+\s+)?(?P<speaker>[\w][\w .'-]*):[ \t]*(?P<text>.*)$"
+_NUMBERED_SPEAKER_LINE = re.compile(
+    r"^L\d+\s+(?P<speaker>[\w][\w .'-]*):[ \t]*(?P<text>.*)$"
+)
+_UNNUMBERED_SPEAKER_LINE = re.compile(
+    r"^(?P<speaker>[\w][\w .'-]*):[ \t]*(?P<text>.*)$"
 )
 
 
-def _speaker_line(line: str) -> tuple[str, str] | None:
-    """Return an explicit speaker label and text, if the line has that shape."""
+def _speaker_line(
+    line: str, pattern: re.Pattern[str]
+) -> tuple[str, str] | None:
+    """Return a speaker label and text when the line matches ``pattern``."""
 
-    match = _SPEAKER_LINE.fullmatch(line.strip())
+    match = pattern.fullmatch(line.strip())
     if match is None:
         return None
 
@@ -23,6 +28,14 @@ def _speaker_line(line: str) -> tuple[str, str] | None:
     if not any(character.isalpha() for character in speaker):
         return None
     return speaker, match.group("text").strip()
+
+
+def _numbered_speaker_line(line: str) -> tuple[str, str] | None:
+    return _speaker_line(line, _NUMBERED_SPEAKER_LINE)
+
+
+def _unnumbered_speaker_line(line: str) -> tuple[str, str] | None:
+    return _speaker_line(line, _UNNUMBERED_SPEAKER_LINE)
 
 
 def normalize_transcript(raw_text: str) -> NormalizedTranscript:
@@ -39,14 +52,16 @@ def normalize_transcript(raw_text: str) -> NormalizedTranscript:
     if first_content is None:
         raise ValueError("Transcript must contain speaker-labelled dialogue")
 
-    first_turn = next(
-        (
-            index
-            for index in range(first_content, len(lines))
-            if _speaker_line(lines[index]) is not None
-        ),
-        None,
-    )
+    first_turn = None
+    numbered = False
+    for index in range(first_content, len(lines)):
+        if _numbered_speaker_line(lines[index]) is not None:
+            first_turn = index
+            numbered = True
+            break
+        if _unnumbered_speaker_line(lines[index]) is not None:
+            first_turn = index
+            break
     if first_turn is None:
         raise ValueError("Transcript contains no valid speaker-labelled turns")
 
@@ -62,7 +77,9 @@ def normalize_transcript(raw_text: str) -> NormalizedTranscript:
         if not line.strip():
             continue
 
-        labelled = _speaker_line(line)
+        labelled = _numbered_speaker_line(line)
+        if labelled is None and not numbered:
+            labelled = _unnumbered_speaker_line(line)
         if labelled is not None:
             speaker, text = labelled
             parsed_turns.append((speaker, [text] if text else []))
