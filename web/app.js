@@ -4,10 +4,24 @@
   var transcriptEl = document.getElementById('transcript');
   var runButton = document.getElementById('run-button');
   var workEl = document.getElementById('work');
+  var emptyEl = document.getElementById('empty');
+  var summaryEl = document.getElementById('summary');
+  var sheetEl = document.querySelector('.sheet');
   var guardrailEl = document.getElementById('guardrail');
   var guardrailBadgeEl = document.getElementById('guardrail-badge');
 
   var guardrailOn = true;
+  var dimEnabled = false;
+
+  function setDim(on) {
+    if (!sheetEl) return;
+    sheetEl.classList.toggle('sheet--dim', dimEnabled && on);
+  }
+
+  if (sheetEl) {
+    sheetEl.addEventListener('mouseenter', function () { setDim(false); });
+    sheetEl.addEventListener('mouseleave', function () { setDim(true); });
+  }
 
   function renderTranscript(turns) {
     transcriptEl.innerHTML = '';
@@ -199,11 +213,24 @@
     }
 
     li.addEventListener('mouseenter', function () {
+      setDim(false);
       highlightTurns(action.action_evidence);
     });
-    li.addEventListener('mouseleave', clearHighlight);
+    li.addEventListener('mouseleave', function () {
+      setDim(true);
+      clearHighlight();
+    });
 
     return li;
+  }
+
+  function resetWork() {
+    workEl.innerHTML = '';
+    summaryEl.innerHTML = '';
+    runButton.classList.remove('run-button--used');
+    dimEnabled = false;
+    setDim(false);
+    if (emptyEl) workEl.appendChild(emptyEl);
   }
 
   function highlightTurns(turnIds) {
@@ -230,9 +257,19 @@
     var p = document.createElement('p');
     p.className = 'counter';
 
+    function number(value) {
+      var n = document.createElement('span');
+      n.className = 'counter__n';
+      n.textContent = String(value);
+      return n;
+    }
+
     if (!guardrail) {
       p.className = 'counter counter--breach';
-      p.appendChild(document.createTextNode(total + ' done. 0 waiting.'));
+      p.appendChild(number(total));
+      p.appendChild(document.createTextNode(' done. '));
+      p.appendChild(number(0));
+      p.appendChild(document.createTextNode(' waiting.'));
 
       var aftermath = document.createElement('span');
       aftermath.className = 'counter__aftermath';
@@ -242,11 +279,12 @@
       return p;
     }
 
-    p.appendChild(document.createTextNode(
-      total + (total === 1 ? ' loose end. ' : ' loose ends. ') +
-      done + ' done. ' +
-      held + (held === 1 ? ' waiting on a human. ' : ' waiting on a human. ')
-    ));
+    p.appendChild(number(total));
+    p.appendChild(document.createTextNode(total === 1 ? ' loose end. ' : ' loose ends. '));
+    p.appendChild(number(done));
+    p.appendChild(document.createTextNode(' done. '));
+    p.appendChild(number(held));
+    p.appendChild(document.createTextNode(held === 1 ? ' waiting on a human. ' : ' waiting on a human. '));
 
     var secs = document.createElement('span');
     secs.className = 'counter__seconds';
@@ -271,6 +309,9 @@
 
   function revealCards(actions, seconds, guardrail) {
     workEl.innerHTML = '';
+    summaryEl.innerHTML = '';
+    dimEnabled = true;
+    setDim(true);
 
     var list = document.createElement('ul');
     list.className = 'work__list';
@@ -283,7 +324,7 @@
     });
 
     window.setTimeout(function () {
-      workEl.appendChild(buildCounter(actions, seconds, guardrail));
+      summaryEl.appendChild(buildCounter(actions, seconds, guardrail));
       runButton.disabled = false;
       startStatusPolling();
     }, actions.length * 400);
@@ -301,7 +342,7 @@
     guardrailOn = !guardrailOn;
     renderGuardrail();
     clearHighlight();
-    workEl.innerHTML = '';
+    resetWork();
   });
 
   renderGuardrail();
@@ -310,7 +351,8 @@
     stopStatusPolling();
     runButton.disabled = true;
     clearHighlight();
-    workEl.innerHTML = '';
+    resetWork();
+    runButton.classList.add('run-button--used');
 
     fetch('actions.json')
       .then(function (response) {
@@ -323,6 +365,7 @@
       })
       .catch(function () {
         runButton.disabled = false;
+        workEl.innerHTML = '';
         var p = document.createElement('p');
         p.className = 'transcript__status';
         p.textContent = 'Could not load actions.json.';
