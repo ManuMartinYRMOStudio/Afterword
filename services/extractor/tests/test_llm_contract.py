@@ -155,6 +155,88 @@ def test_call1_prompt_defines_support_and_basis_vocabulary(transcript):
         assert basis in prompt
 
 
+def test_call1_prompt_states_the_individuation_and_qualifier_rules(transcript):
+    """Qualifiers and refinements are absorbed; independent work still splits.
+
+    These are rendered-prompt invariants, not a claim about model output: the
+    rules that keep G3's «I'll flag it in the message» and G4's «and come back
+    to you» from becoming second commitments have to reach the model at all.
+    """
+
+    prompt = prompts.build_discovery_prompt(transcript)
+    assert "INDIVIDUATION - how many commitments a passage contains" in prompt
+    assert (
+        "A condition, restraint, deadline, confirmation, supplied value, or other "
+        "qualifier on work established elsewhere is not a separate extractable work "
+        "commitment." in prompt
+    )
+    assert (
+        "A later undertaking that only refines HOW an already-established piece of "
+        "work will be carried out, WHAT that same deliverable will contain, or HOW "
+        "the result of that work will be reported is part of the existing work, not "
+        "a separate commitment." in prompt
+    )
+    # The absorbing rules must not swallow work the speaker actually undertakes.
+    assert "Do not use this to merge genuinely independent follow-up work." in prompt
+    assert (
+        "Where the speaker also undertakes to produce the thing the qualifier waits "
+        "on, that production is its own commitment and is extracted separately." in prompt
+    )
+    assert (
+        "Do not combine separate pieces of work merely because they are of a similar "
+        "kind, are owned by the same speaker, or would be carried out in the same way."
+        in prompt
+    )
+    # The same-destination merge that keeps the demo at one recording commitment.
+    assert (
+        "put into the SAME named file, record, or destination during one continuous "
+        "exchange are ONE commitment" in prompt
+    )
+
+
+def test_call1_prompt_states_evidence_purity_rules(transcript):
+    """Turns that only qualify an undertaking must stay out of its evidence."""
+
+    prompt = prompts.build_discovery_prompt(transcript)
+    assert "EVIDENCE PURITY" in prompt
+    assert "Cite the turns that establish or re-establish the undertaking itself." in prompt
+    for excluded in (
+        "confirms a date or time",
+        "supplies a recipient, an address, or contents",
+        "adds a deadline",
+        "adds a floor, a ceiling, or a threshold",
+        "adds a restraint or a condition",
+        "refines what the deliverable will contain",
+        "agrees with or acknowledges work already established",
+    ):
+        assert excluded in prompt
+    # A correction re-establishes the work, so it is the one thing that may join.
+    assert (
+        "A true correction that replaces the earlier wording and re-establishes the "
+        "undertaking may join commitment_evidence." in prompt
+    )
+    # Excluding a turn here must not read as discarding it.
+    assert "Leaving them out of commitment_evidence does not discard them." in prompt
+
+
+def test_call1_prompt_bounds_the_desire_upgrade(transcript):
+    """A wish becomes work only when the same speaker makes it operative."""
+
+    prompt = prompts.build_discovery_prompt(transcript)
+    assert "A stated wish is excluded while it stays a wish." in prompt
+    assert (
+        "either by giving it as a step they will carry out before work they have "
+        "already undertaken, or by later stating it as something they will have done."
+        in prompt
+    )
+    # The exclusions that keep a speaker's own travel plans from becoming work.
+    assert (
+        "A wish about an outcome, about what someone else should do, or about how "
+        "things should be stays excluded, and so does a statement about the speaker's "
+        "own travel, availability or circumstances." in prompt
+    )
+
+
 def test_call1_prompt_carries_no_capability_or_risk_taxonomy():
     instructions = prompts.CALL1_INSTRUCTIONS.lower()
     for action_type in ActionType:
@@ -271,9 +353,80 @@ def test_call2_prompt_governs_grounded_synthesis_and_omission(transcript, candid
     prompt = prompts.build_resolution_prompt(transcript, "CLARA", candidates)
     assert "Thursday 12:00" in prompt
     assert "Do not invent unsupported recipients, dates, prices, targets" in prompt
-    assert "a composed value is normally contextual rather than explicit" in prompt
-    assert "If a required parameter lacks enough transcript support, omit it." in prompt
-    assert "Never emit a placeholder, empty, or guessed value." in prompt
+    # Authored framing is contextual; faithful re-rendering of stated content is not.
+    assert "anything you had to author rather than transcribe" in prompt
+    assert (
+        "Faithful concatenation or compression of stated facts stays explicit only "
+        "where it introduces no new relation, framing, purpose, or meaning." in prompt
+    )
+    # Inclusion turns on whether a value exists, never on how firmly it is supported.
+    assert "Omit a required parameter in exactly three cases:" in prompt
+    assert (
+        "How firmly a value is supported decides its support level. It never decides "
+        "whether the value is included." in prompt
+    )
+    assert "Never emit a placeholder, empty, hedged, or guessed value." in prompt
+
+
+def test_call2_prompt_separates_commitment_evidence_from_parameter_evidence(
+    transcript, candidates
+):
+    """Call-1 evidence proves the work exists; it does not bound its values.
+
+    Without this, a turn deliberately kept out of commitment_evidence looks
+    unusable at Call 2, and the content it carries has nowhere to land but a
+    second action.
+    """
+
+    prompt = prompts.build_resolution_prompt(transcript, "CLARA", candidates)
+    assert "WHICH TURNS MAY SUPPORT A PARAMETER" in prompt
+    assert (
+        "It does not limit which transcript turns may support that work's parameters."
+        in prompt
+    )
+    assert (
+        "including turns that were correctly left out of commitment_evidence" in prompt
+    )
+    assert (
+        "Those later turns enrich that candidate's body; they do not create another "
+        "action." in prompt
+    )
+
+
+def test_call2_prompt_forbids_hedging_or_downgrading_a_conflict(
+    transcript, candidates
+):
+    """A contested value stays absent; it never becomes one softened string."""
+
+    prompt = prompts.build_resolution_prompt(transcript, "CLARA", candidates)
+    assert "A hedge is not a conflict, and a conflict is never turned into a hedge." in prompt
+    assert (
+        'omit the parameter, do not join them with "or", do not choose between them, '
+        "and do not lower the support level to stand in for the disagreement." in prompt
+    )
+    assert "A value nobody supplied is absent, and absent is not weak." in prompt
+    # A bound on a value is not a rival candidate for it.
+    assert (
+        "A stated floor, ceiling, or threshold constrains a value without being a "
+        "second candidate for it." in prompt
+    )
+    # A single softened value is still emitted, with the speaker's own qualifier.
+    assert "A value the speaker hedged is still a value." in prompt
+    assert 'becomes "approximately N" at weak' in prompt
+
+
+def test_call2_prompt_routes_constraints_to_review_context(transcript, candidates):
+    """Constraints surface to the reader without inventing payload fields."""
+
+    prompt = prompts.build_resolution_prompt(transcript, "CLARA", candidates)
+    assert (
+        "Where the transcript constrains, sequences or qualifies the work, state it "
+        "in the summary so the reader sees it" in prompt
+    )
+    assert (
+        "it never invents a parameter the type does not have, never changes the "
+        "selected capability, and never becomes a value of its own." in prompt
+    )
 
 
 def test_call2_prompt_states_the_transcript_injection_boundary(transcript, candidates):
