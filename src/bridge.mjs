@@ -77,6 +77,72 @@ function validateSnapshot(value) {
   return { transcript: value.transcript, actions: value.actions };
 }
 
+function isObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+// The engine owns canonical execution strings and hashes. This adapter only
+// validates their envelope and copies them into the bridge's existing snapshot
+// shape; it never serializes execution data or calculates a hash.
+export function adaptEngineResponse(value) {
+  if (!isObject(value)) {
+    throw new SnapshotValidationError('engine response must be an object');
+  }
+  const problems = [];
+  if (!Array.isArray(value.turns)) problems.push('engine response field "turns" must be an array');
+  if (!Array.isArray(value.actions)) problems.push('engine response field "actions" must be an array');
+  if (!isObject(value.execution_integrity)) {
+    problems.push('engine response field "execution_integrity" must be an object');
+  }
+  if (!Array.isArray(value.warnings)) problems.push('engine response field "warnings" must be an array');
+  if (!Number.isInteger(value.total) || value.total < 0) {
+    problems.push('engine response field "total" must be a non-negative integer');
+  }
+  if (Array.isArray(value.actions) && isObject(value.execution_integrity)) {
+    const actionIds = new Set();
+    for (const [index, action] of value.actions.entries()) {
+      if (!isObject(action) || typeof action.id !== 'string' || !action.id.trim()) {
+        problems.push('engine action at index ' + index + ' must have a non-empty string id');
+        continue;
+      }
+      if (actionIds.has(action.id)) {
+        problems.push('engine response contains duplicate action id ' + JSON.stringify(action.id));
+        continue;
+      }
+      actionIds.add(action.id);
+      const integrity = value.execution_integrity[action.id];
+      if (!isObject(integrity)) {
+        problems.push('engine action ' + JSON.stringify(action.id) + ' has no integrity entry');
+        continue;
+      }
+      if (typeof integrity.canonical_execution !== 'string' || !integrity.canonical_execution) {
+        problems.push('integrity for ' + JSON.stringify(action.id) + ' has invalid canonical_execution');
+      }
+      if (typeof integrity.execution_sha256 !== 'string' ||
+          !/^[0-9a-fA-F]{64}$/.test(integrity.execution_sha256)) {
+        problems.push('integrity for ' + JSON.stringify(action.id) + ' has invalid execution_sha256');
+      }
+    }
+    for (const id of Object.keys(value.execution_integrity)) {
+      if (!actionIds.has(id)) problems.push('integrity entry ' + JSON.stringify(id) + ' has no action');
+    }
+    if (value.total !== value.actions.length) {
+      problems.push('engine response total does not match actions length');
+    }
+  }
+  if (problems.length) throw new SnapshotValidationError(problems.join('; '));
+
+  const snapshot = {
+    transcript: value.turns,
+    actions: value.actions.map(action => ({
+      ...action,
+      canonical: value.execution_integrity[action.id].canonical_execution,
+      hash: value.execution_integrity[action.id].execution_sha256,
+    })),
+  };
+  return validateSnapshot(snapshot);
+}
+
 function json(response, code, body) {
   response.writeHead(code, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -155,14 +221,18 @@ async function serve(request, response, getStatus) {
   }
 }
 
-async function extract(url, text, principal, signal) {
+export async function extract(url, token, text, principal, signal) {
   for (let attempt = 1; attempt <= 6; attempt += 1) {
     if (signal.aborted) return null;
     console.log('[engine] Attempt ' + attempt + '/6');
     try {
       const response = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          Authorization: 'Bearer ' + token,
+        },
         body: JSON.stringify(buildExtractRequest(text, principal)),
         signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
       });
@@ -170,7 +240,7 @@ async function extract(url, text, principal, signal) {
         await response.body?.cancel();
         throw new Error('HTTP ' + response.status);
       }
-      return validateSnapshot(await response.json());
+      return adaptEngineResponse(await response.json());
     } catch (error) {
       if (signal.aborted) return null;
       // Do not print response bodies, configuration values, or Telegram credentials.
@@ -272,7 +342,7 @@ async function main() {
   }
 
   // Load configuration BEFORE importing hold.mjs, which may read it at module initialization.
-  for (const key of ['TG_TOKEN', 'TG_CHAT', 'ENGINE_URL', 'PRINCIPAL', 'TRANSCRIPT_PATH']) {
+  for (const key of ['TG_TOKEN', 'TG_CHAT', 'ENGINE_URL', 'ENGINE_TOKEN', 'PRINCIPAL', 'TRANSCRIPT_PATH']) {
     if (env[key] !== undefined) process.env[key] = env[key];
   }
   const { sendProposal, getStatus, startPolling, tamperTest } = await import('./hold.mjs');
@@ -362,6 +432,10 @@ async function readEngineResult(env, signal) {
     console.error('Missing PRINCIPAL in .env. Set the speaker name.');
     return null;
   }
+  if (!env.ENGINE_TOKEN?.trim()) {
+    console.error('Missing ENGINE_TOKEN in .env. Set the server-side engine credential.');
+    return null;
+  }
   try {
     const url = new URL(env.ENGINE_URL);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('Protocol');
@@ -370,7 +444,7 @@ async function readEngineResult(env, signal) {
     return null;
   }
 
-  const result = await extract(env.ENGINE_URL, text, env.PRINCIPAL, signal);
+  const result = await extract(env.ENGINE_URL, env.ENGINE_TOKEN, text, env.PRINCIPAL, signal);
   if (signal.aborted) return;
   if (!result) {
     console.error('The engine failed on all six attempts.');
@@ -429,9 +503,11 @@ async function processTranscript(env, sendProposal, signal) {
   }
 }
 
-void main().catch(error => {
-  console.error(error.code === 'EADDRINUSE'
-    ? 'Unable to start AfterWord: 127.0.0.1:8080 is already in use.'
-    : 'Unable to start AfterWord. Check .env and the availability of src/hold.mjs.');
-  process.exitCode = 1;
-});
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  void main().catch(error => {
+    console.error(error.code === 'EADDRINUSE'
+      ? 'Unable to start AfterWord: 127.0.0.1:8080 is already in use.'
+      : 'Unable to start AfterWord. Check .env and the availability of src/hold.mjs.');
+    process.exitCode = 1;
+  });
+}
