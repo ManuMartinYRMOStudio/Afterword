@@ -4,6 +4,10 @@
   var transcriptEl = document.getElementById('transcript');
   var runButton = document.getElementById('run-button');
   var workEl = document.getElementById('work');
+  var guardrailEl = document.getElementById('guardrail');
+  var guardrailBadgeEl = document.getElementById('guardrail-badge');
+
+  var guardrailOn = true;
 
   function renderTranscript(turns) {
     transcriptEl.innerHTML = '';
@@ -78,11 +82,19 @@
     return weak;
   }
 
-  function buildCard(action) {
-    var done = action.auto_execute === true;
+  // With the guardrail off nothing is held, so a held card needs a word for
+  // what already happened to it. Anything unlisted just reads DONE.
+  var BREACH_BADGE = {
+    email: 'SENT',
+    listing_publish: 'PUBLISHED'
+  };
+
+  function buildCard(action, guardrail) {
+    var done = guardrail ? action.auto_execute === true : true;
+    var breach = !guardrail;
 
     var li = document.createElement('li');
-    li.className = 'card ' + (done ? 'card--done' : 'card--held');
+    li.className = 'card ' + (breach ? 'card--breach' : (done ? 'card--done' : 'card--held'));
     li.setAttribute('data-action-id', action.id);
 
     var head = document.createElement('div');
@@ -109,7 +121,11 @@
 
     var badge = document.createElement('span');
     badge.className = 'card__badge';
-    badge.textContent = done ? 'DONE' : 'WAITING FOR YOU';
+    if (breach) {
+      badge.textContent = BREACH_BADGE[action.type] || 'DONE';
+    } else {
+      badge.textContent = done ? 'DONE' : 'WAITING FOR YOU';
+    }
 
     head.appendChild(icon);
     head.appendChild(text);
@@ -123,7 +139,7 @@
       li.appendChild(weak);
     });
 
-    if (!done) {
+    if (!breach && !done) {
       var hold = document.createElement('p');
       hold.className = 'card__hold';
       hold.textContent = holdReasonText(action.hold_reason);
@@ -154,13 +170,26 @@
     });
   }
 
-  function buildCounter(actions, seconds) {
+  function buildCounter(actions, seconds, guardrail) {
     var total = actions.length;
     var done = actions.filter(function (a) { return a.auto_execute === true; }).length;
     var held = total - done;
 
     var p = document.createElement('p');
     p.className = 'counter';
+
+    if (!guardrail) {
+      p.className = 'counter counter--breach';
+      p.appendChild(document.createTextNode(total + ' done. 0 waiting.'));
+
+      var aftermath = document.createElement('span');
+      aftermath.className = 'counter__aftermath';
+      aftermath.textContent = 'A price nobody confirmed is now public.';
+      p.appendChild(aftermath);
+
+      return p;
+    }
+
     p.appendChild(document.createTextNode(
       total + (total === 1 ? ' loose end. ' : ' loose ends. ') +
       done + ' done. ' +
@@ -188,7 +217,7 @@
     return { actions: [], seconds: 14 };
   }
 
-  function revealCards(actions, seconds) {
+  function revealCards(actions, seconds, guardrail) {
     workEl.innerHTML = '';
 
     var list = document.createElement('ul');
@@ -197,15 +226,31 @@
 
     actions.forEach(function (action, index) {
       window.setTimeout(function () {
-        list.appendChild(buildCard(action));
+        list.appendChild(buildCard(action, guardrail));
       }, index * 400);
     });
 
     window.setTimeout(function () {
-      workEl.appendChild(buildCounter(actions, seconds));
+      workEl.appendChild(buildCounter(actions, seconds, guardrail));
       runButton.disabled = false;
     }, actions.length * 400);
   }
+
+  function renderGuardrail() {
+    guardrailEl.classList.toggle('guardrail--on', guardrailOn);
+    guardrailEl.classList.toggle('guardrail--off', !guardrailOn);
+    guardrailEl.setAttribute('aria-pressed', guardrailOn ? 'true' : 'false');
+    guardrailBadgeEl.textContent = guardrailOn ? 'ON' : 'OFF';
+  }
+
+  guardrailEl.addEventListener('click', function () {
+    guardrailOn = !guardrailOn;
+    renderGuardrail();
+    clearHighlight();
+    workEl.innerHTML = '';
+  });
+
+  renderGuardrail();
 
   runButton.addEventListener('click', function () {
     runButton.disabled = true;
@@ -219,7 +264,7 @@
       })
       .then(function (data) {
         var payload = normalise(data);
-        revealCards(payload.actions, payload.seconds);
+        revealCards(payload.actions, payload.seconds, guardrailOn);
       })
       .catch(function () {
         runButton.disabled = false;
