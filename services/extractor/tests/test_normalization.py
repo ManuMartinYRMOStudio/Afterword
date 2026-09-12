@@ -67,6 +67,13 @@ def test_speakers_are_unique_in_first_appearance_order():
     assert result.speakers == ["DAVID", "CLARA", "ANA"]
 
 
+def test_speaker_identity_and_turn_text_are_preserved():
+    result = normalize_transcript("Clara Smith: I'll send €329,000 — exactly as stated.")
+
+    assert result.turns[0].speaker == "Clara Smith"
+    assert result.turns[0].text == "I'll send €329,000 — exactly as stated."
+
+
 def test_repeated_speaker_turns_remain_separate():
     result = normalize_transcript("CLARA: First.\nCLARA: Second.")
 
