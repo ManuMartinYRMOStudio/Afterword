@@ -207,17 +207,44 @@ def test_other_speakers_commitments_skip_call2_and_return_valid_empty_result(
     assert result.total == len(result.actions) == 0
 
 
-def test_principal_must_be_an_exact_speaker_before_settings_or_model_calls(
+def test_absent_principal_returns_empty_result_before_settings_or_model_calls(
     monkeypatch, configured_settings
 ):
     discover = Mock(side_effect=AssertionError("Call 1 must not run"))
+    resolve = Mock(side_effect=AssertionError("Call 2 must not run"))
     monkeypatch.setattr(pipeline, "discover_commitments", discover)
+    monkeypatch.setattr(pipeline, "resolve_candidates", resolve)
 
-    with pytest.raises(ValueError, match="Principal.*exact speaker"):
-        pipeline.run_extraction(TRANSCRIPT_TEXT, "clara")
+    result = pipeline.run_extraction(TRANSCRIPT_TEXT, "MARTA")
 
+    assert result.turns == normalize_transcript(TRANSCRIPT_TEXT).turns
+    assert result.actions == []
+    assert result.execution_integrity == {}
+    assert result.warnings == []
+    assert result.total == 0
     configured_settings.assert_not_called()
     discover.assert_not_called()
+    resolve.assert_not_called()
+
+
+def test_principal_matching_remains_exact_and_case_sensitive(
+    monkeypatch, configured_settings
+):
+    discover = Mock(side_effect=AssertionError("Call 1 must not run"))
+    resolve = Mock(side_effect=AssertionError("Call 2 must not run"))
+    monkeypatch.setattr(pipeline, "discover_commitments", discover)
+    monkeypatch.setattr(pipeline, "resolve_candidates", resolve)
+
+    result = pipeline.run_extraction(TRANSCRIPT_TEXT, "clara")
+
+    assert result.turns == normalize_transcript(TRANSCRIPT_TEXT).turns
+    assert result.actions == []
+    assert result.execution_integrity == {}
+    assert result.warnings == []
+    assert result.total == 0
+    configured_settings.assert_not_called()
+    discover.assert_not_called()
+    resolve.assert_not_called()
 
 
 def test_missing_openai_key_fails_before_discovery(monkeypatch):

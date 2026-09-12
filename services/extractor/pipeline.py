@@ -22,8 +22,12 @@ def run_extraction(transcript_text: str, principal: str) -> ExtractionResult:
 
     transcript = normalize_transcript(transcript_text)
     if principal not in transcript.speakers:
-        raise ValueError(
-            f"Principal {principal!r} is not an exact speaker in the transcript"
+        return ExtractionResult(
+            turns=transcript.turns,
+            actions=[],
+            execution_integrity={},
+            warnings=[],
+            total=0,
         )
 
     settings = load_settings()
