@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+
 from .action_specs import (
     ACTION_SPECS,
     REVERSIBILITY,
@@ -117,8 +120,17 @@ def build_resolved_actions(
 def canonicalize_execution(
     action_type: ActionType, payload: dict[str, str | None]
 ) -> str:
-    raise NotImplementedError("Canonical serialization belongs to a later wave")
+    """Serialize only execution-relevant state as deterministic compact JSON."""
+
+    return json.dumps(
+        {"type": action_type.value, "payload": payload},
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def hash_execution(canonical_execution: str) -> str:
-    raise NotImplementedError("Execution hashing belongs to a later wave")
+    """Hash the exact canonical execution string as UTF-8 bytes."""
+
+    return hashlib.sha256(canonical_execution.encode("utf-8")).hexdigest()
