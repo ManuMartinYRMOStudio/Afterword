@@ -7,7 +7,7 @@ import { parseEnv } from 'node:util';
 import { performance } from 'node:perf_hooks';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const REQUIRED = ['TG_TOKEN', 'TG_CHAT', 'ENGINE_URL'];
+const REQUIRED = ['TG_TOKEN', 'TG_CHAT', 'ENGINE_URL', 'ENGINE_TOKEN'];
 let env = {};
 let secrets = [];
 
@@ -29,7 +29,7 @@ async function checkEnv() {
     // Node 22 can consume the next line after an unquoted empty value with spaces.
     // Normalize only empty required settings; preserve quoted values and other keys.
     env = parseEnv(text.replace(
-      /^([ \t]*(?:export[ \t]+)?(?:TG_TOKEN|TG_CHAT|ENGINE_URL)[ \t]*=)[ \t]+(?=\r?$)/gm, '$1'));
+      /^([ \t]*(?:export[ \t]+)?(?:TG_TOKEN|TG_CHAT|ENGINE_URL|ENGINE_TOKEN)[ \t]*=)[ \t]+(?=\r?$)/gm, '$1'));
 
     secrets = [...new Set(Object.values(env).filter(Boolean).flatMap(value => [
       value, encodeURIComponent(value),
@@ -40,7 +40,7 @@ async function checkEnv() {
       (missing.length ? '; missing or empty: ' + missing.join(', ') : ''));
   } catch (error) {
     return result(false, (error.code === 'ENOENT' ? 'does not exist' : 'cannot be read or parsed') +
-      '; TG_TOKEN.length=0, TG_CHAT.length=0, ENGINE_URL.length=0 (unverified)');
+      '; TG_TOKEN.length=0, TG_CHAT.length=0, ENGINE_URL.length=0, ENGINE_TOKEN.length=0 (unverified)');
   }
 }
 
