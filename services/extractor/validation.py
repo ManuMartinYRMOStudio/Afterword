@@ -2,7 +2,7 @@
 
 from .action_specs import ACTION_SPECS
 from .models import Call1Commitment, Call2ActionDraft, CommitmentCandidate
-from .models import NormalizedTranscript, ValidationWarning
+from .models import NormalizedTranscript, ParameterDraft, ValidationWarning
 
 
 def _warning(
@@ -130,4 +130,166 @@ def validate_call2(
     candidates: list[CommitmentCandidate],
     transcript: NormalizedTranscript,
 ) -> tuple[list[Call2ActionDraft], list[ValidationWarning]]:
-    raise NotImplementedError("Call-2 validation belongs to a later wave")
+    """Validate and order Call-2 drafts by their original Call-1 candidates."""
+
+    expected_ids = {candidate.candidate_id for candidate in candidates}
+    drafts_by_candidate: dict[str, list[Call2ActionDraft]] = {
+        candidate.candidate_id: [] for candidate in candidates
+    }
+    warnings: list[ValidationWarning] = []
+
+    for draft in drafts:
+        if draft.candidate_id not in expected_ids:
+            warnings.append(
+                _warning(
+                    "call2",
+                    "unknown_candidate_id",
+                    (
+                        f"Dropped Call-2 resolution for unknown candidate "
+                        f"{draft.candidate_id}."
+                    ),
+                    draft.candidate_id,
+                )
+            )
+            continue
+        drafts_by_candidate[draft.candidate_id].append(draft)
+
+    known_turn_ids = {turn.id for turn in transcript.turns}
+    validated: list[Call2ActionDraft] = []
+
+    for candidate in candidates:
+        candidate_id = candidate.candidate_id
+        candidate_drafts = drafts_by_candidate[candidate_id]
+        if not candidate_drafts:
+            warnings.append(
+                _warning(
+                    "call2",
+                    "missing_candidate_resolution",
+                    f"No Call-2 resolution was returned for {candidate_id}.",
+                    candidate_id,
+                )
+            )
+            continue
+
+        draft = candidate_drafts[0]
+        if len(candidate_drafts) > 1:
+            if all(item == draft for item in candidate_drafts[1:]):
+                warnings.append(
+                    _warning(
+                        "call2",
+                        "duplicate_candidate_collapsed",
+                        (
+                            f"Collapsed {len(candidate_drafts)} identical Call-2 "
+                            f"resolutions for {candidate_id}."
+                        ),
+                        candidate_id,
+                    )
+                )
+            else:
+                warnings.append(
+                    _warning(
+                        "call2",
+                        "conflicting_candidate_resolutions",
+                        (
+                            f"Invalidated {candidate_id} because Call 2 returned "
+                            "materially conflicting resolutions."
+                        ),
+                        candidate_id,
+                    )
+                )
+                continue
+
+        parameters = _validate_parameters(draft, known_turn_ids, warnings)
+        validated.append(draft.model_copy(update={"parameters": parameters}))
+
+    return validated, warnings
+
+
+def _validate_parameters(
+    draft: Call2ActionDraft,
+    known_turn_ids: set[str],
+    warnings: list[ValidationWarning],
+) -> list[ParameterDraft]:
+    """Validate one action draft's parameters, retaining model order."""
+
+    spec = ACTION_SPECS[draft.type]
+    legal_names = set(spec.required) | set(spec.optional)
+    parameters_by_name: dict[str, list[ParameterDraft]] = {}
+
+    for parameter in draft.parameters:
+        if parameter.name not in legal_names:
+            warnings.append(
+                _warning(
+                    "call2",
+                    "illegal_parameter_name",
+                    (
+                        f"Dropped illegal parameter {parameter.name!r} for "
+                        f"{draft.type.value} candidate {draft.candidate_id}."
+                    ),
+                    draft.candidate_id,
+                )
+            )
+            continue
+        parameters_by_name.setdefault(parameter.name, []).append(parameter)
+
+    validated: list[ParameterDraft] = []
+    for name, duplicates in parameters_by_name.items():
+        parameter = duplicates[0]
+        if len(duplicates) > 1:
+            if all(item == parameter for item in duplicates[1:]):
+                warnings.append(
+                    _warning(
+                        "call2",
+                        "duplicate_parameter_collapsed",
+                        (
+                            f"Collapsed {len(duplicates)} identical {name!r} "
+                            f"parameters for {draft.candidate_id}."
+                        ),
+                        draft.candidate_id,
+                    )
+                )
+            else:
+                requirement = "required" if name in spec.required else "optional"
+                warnings.append(
+                    _warning(
+                        "call2",
+                        "conflicting_parameter_values",
+                        (
+                            f"Invalidated conflicting {requirement} parameter "
+                            f"{name!r} for {draft.candidate_id}."
+                        ),
+                        draft.candidate_id,
+                    )
+                )
+                continue
+
+        evidence = [turn_id for turn_id in parameter.evidence if turn_id in known_turn_ids]
+        if len(evidence) != len(parameter.evidence):
+            warnings.append(
+                _warning(
+                    "call2",
+                    "invalid_parameter_evidence_removed",
+                    (
+                        f"Removed unknown evidence ID(s) from parameter {name!r} "
+                        f"for {draft.candidate_id}."
+                    ),
+                    draft.candidate_id,
+                )
+            )
+        if not evidence:
+            warnings.append(
+                _warning(
+                    "call2",
+                    "parameter_without_valid_evidence",
+                    (
+                        f"Dropped parameter {name!r} for {draft.candidate_id} "
+                        "because no evidence exists in the transcript."
+                    ),
+                    draft.candidate_id,
+                )
+            )
+            continue
+
+        validated.append(parameter.model_copy(update={"evidence": evidence}))
+
+    return validated
