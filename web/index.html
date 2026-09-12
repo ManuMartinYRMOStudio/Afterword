@@ -7,29 +7,51 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <main class="app">
+  <div class="shell">
 
-    <section class="pane pane--source">
-      <header class="pane__header">
-        <h1 class="pane__title">Source text</h1>
-      </header>
-      <div class="transcript" id="transcript">
-        <p class="transcript__status">Loading transcript…</p>
-      </div>
-    </section>
+    <header class="brand">
+      <span class="brand__glyph" aria-hidden="true"></span>
+      <span class="brand__mark">Afterword</span>
+      <span class="brand__tag">meeting → work</span>
+    </header>
 
-    <section class="pane pane--work">
-      <header class="pane__header pane__header--action">
-        <button type="button" class="run-button" id="run-button">Turn this meeting into work</button>
-        <button type="button" class="guardrail guardrail--on" id="guardrail" aria-pressed="true">
-          <span class="guardrail__label">Guardrail</span>
-          <span class="guardrail__badge" id="guardrail-badge">ON</span>
-        </button>
-      </header>
-      <div class="work" id="work"></div>
-    </section>
+    <main class="app">
 
-  </main>
+      <section class="pane pane--source">
+        <div class="sheet">
+          <header class="pane__header letterhead">
+            <h1 class="pane__title">Source text</h1>
+            <img class="letterhead__logo" src="yrmo-logo.png" alt="YRMO Studio" width="150" height="44">
+          </header>
+          <div class="transcript" id="transcript">
+            <p class="transcript__status">Loading transcript…</p>
+          </div>
+          <footer class="sheet__footer">AFTERWORD · SOURCE RECORD</footer>
+        </div>
+      </section>
+
+      <section class="pane pane--work">
+        <header class="pane__header pane__header--action">
+          <button type="button" class="run-button" id="run-button">Turn this meeting into work</button>
+          <button type="button" class="guardrail guardrail--on" id="guardrail" aria-pressed="true">
+            <span class="guardrail__label">Guardrail</span>
+            <span class="guardrail__badge" id="guardrail-badge">ON</span>
+          </button>
+        </header>
+        <div class="work" id="work">
+          <div class="empty" id="empty">
+            <svg class="empty__icon" width="48" height="48" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+              <circle cx="24" cy="24" r="19" stroke="currentColor" stroke-width="1.25"/>
+              <path d="M20 18v12M28 18v12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+            <p class="empty__line">Nothing has been turned into work yet</p>
+          </div>
+        </div>
+        <div class="summary" id="summary"></div>
+      </section>
+
+    </main>
+  </div>
   <script src="app.js"></script>
 </body>
 </html>
