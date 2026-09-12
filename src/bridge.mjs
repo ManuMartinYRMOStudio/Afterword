@@ -31,6 +31,15 @@ export function buildExtractRequest(text, principal) {
   return { transcript: text, principal };
 }
 
+
+function validateSnapshot(value) {
+  if (!value || !Object.hasOwn(value, 'transcript') || !Array.isArray(value.actions) ||
+      value.actions.some(action => !action || typeof action.auto_execute !== 'boolean')) {
+    throw new Error('Invalid snapshot: expected transcript and actions with boolean auto_execute');
+  }
+  return { transcript: value.transcript, actions: value.actions };
+}
+
 function json(response, code, body) {
   response.writeHead(code, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -124,12 +133,7 @@ async function extract(url, text, principal, signal) {
         await response.body?.cancel();
         throw new Error('HTTP ' + response.status);
       }
-      const result = await response.json();
-      if (!result || !Object.hasOwn(result, 'transcript') || !Array.isArray(result.actions) ||
-          result.actions.some(action => !action || typeof action.auto_execute !== 'boolean')) {
-        throw new Error('Invalid response: expected transcript and actions with boolean auto_execute');
-      }
-      return { transcript: result.transcript, actions: result.actions };
+      return validateSnapshot(await response.json());
     } catch (error) {
       if (signal.aborted) return null;
       // Do not print response bodies, configuration values, or Telegram credentials.
@@ -303,7 +307,7 @@ async function main() {
   await processing;
 }
 
-async function processTranscript(env, sendProposal, signal) {
+async function readEngineResult(env, signal) {
   const transcriptPath = resolve(ROOT, env.TRANSCRIPT_PATH || 'web/sample.txt');
   let text;
   try {
@@ -313,43 +317,59 @@ async function processTranscript(env, sendProposal, signal) {
     console.error(error.code === 'ENOENT'
       ? 'Missing transcript: ' + transcriptPath + '. Check TRANSCRIPT_PATH in .env.'
       : 'Unable to read the transcript. Check TRANSCRIPT_PATH and file permissions.');
-    manualFallback();
-    return;
+    return null;
   }
   if (signal.aborted) return;
   if (!env.PRINCIPAL?.trim()) {
     console.error('Missing PRINCIPAL in .env. Set the speaker name.');
-    manualFallback();
-    return;
+    return null;
   }
   try {
     const url = new URL(env.ENGINE_URL);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('Protocol');
   } catch {
     console.error('ENGINE_URL in .env must be an HTTP(S) URL for the /extract endpoint.');
-    manualFallback();
-    return;
+    return null;
   }
 
   const result = await extract(env.ENGINE_URL, text, env.PRINCIPAL, signal);
   if (signal.aborted) return;
   if (!result) {
     console.error('The engine failed on all six attempts.');
-    manualFallback();
-    return;
+    return null;
   }
 
-  try {
-    await mkdir(WEB, { recursive: true });
-    if (signal.aborted) return;
-    // Persist the FULL engine result before logging or proposing any action.
-    // JSON serialization is only transport/storage; no canonicalization or hashing occurs here.
-    await writeFile(join(WEB, 'actions.json'), JSON.stringify(result, null, 2) + '\n', 'utf8');
-  } catch {
-    if (signal.aborted) return;
-    console.error('Unable to save web/actions.json. No actions have been processed.');
-    manualFallback();
-    return;
+  return result;
+}
+
+async function processTranscript(env, sendProposal, signal) {
+  let result = await readEngineResult(env, signal);
+  if (signal.aborted) return;
+
+  if (result) {
+    try {
+      await mkdir(WEB, { recursive: true });
+      if (signal.aborted) return;
+      // Persist the FULL engine result before logging or proposing any action.
+      // JSON serialization is only transport/storage; no canonicalization or hashing occurs here.
+      await writeFile(join(WEB, 'actions.json'), JSON.stringify(result, null, 2) + '\n', 'utf8');
+    } catch {
+      if (signal.aborted) return;
+      console.error('Unable to save web/actions.json. No actions have been processed.');
+      manualFallback();
+      return;
+    }
+  } else {
+    try {
+      const saved = await readFile(join(WEB, 'actions.json'), 'utf8');
+      if (signal.aborted) return;
+      result = validateSnapshot(JSON.parse(saved));
+    } catch {
+      if (signal.aborted) return;
+      console.error('No engine result or usable web/actions.json is available. The web server is still running; write web/actions.json manually.');
+      return;
+    }
+    console.log('Running from web/actions.json, not from the engine.');
   }
 
   for (const action of result.actions) {
